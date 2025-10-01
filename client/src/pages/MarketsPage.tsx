@@ -15,17 +15,23 @@ export default function MarketsPage() {
   const [sortBy, setSortBy] = useState("volume");
 
   const { data: markets, isLoading } = useQuery<Market[]>({
-    queryKey: ["/api/markets", { category: category === "all" ? undefined : category, search }],
+    queryKey: ["/api/markets"],
   });
 
   const categories = ["all", "Politics", "Sports", "Crypto", "Economy", "Entertainment"];
 
-  const sortedMarkets = markets?.slice().sort((a, b) => {
+  const filteredMarkets = markets?.filter((market) => {
+    if (category !== "all" && market.category !== category) return false;
+    if (search && !market.question.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  }) || [];
+
+  const sortedMarkets = filteredMarkets.slice().sort((a, b) => {
     if (sortBy === "volume") return Number(b.totalVolume) - Number(a.totalVolume);
     if (sortBy === "liquidity") return Number(b.liquidity) - Number(a.liquidity);
     if (sortBy === "closing") return new Date(a.closingTime).getTime() - new Date(b.closingTime).getTime();
     return 0;
-  }) || [];
+  });
 
   return (
     <div className="container px-4 py-8">
