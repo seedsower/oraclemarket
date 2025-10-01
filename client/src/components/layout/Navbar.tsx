@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, Vote, Trophy, User, Coins } from "lucide-react";
+import { TrendingUp, Vote, Trophy, User, Coins, ArrowLeftRight } from "lucide-react";
 import { WalletButton } from "@/components/wallet/WalletButton";
 
 export function Navbar() {
@@ -9,6 +9,7 @@ export function Navbar() {
   const navLinks = [
     { href: "/markets", label: "Markets", icon: TrendingUp },
     { href: "/portfolio", label: "Portfolio", icon: User },
+    { href: "/swap", label: "Swap", icon: ArrowLeftRight },
     { href: "/stake", label: "Stake", icon: Coins },
     { href: "/governance", label: "Governance", icon: Vote },
     { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
