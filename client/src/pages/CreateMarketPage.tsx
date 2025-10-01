@@ -13,31 +13,36 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { useToast } from "@/hooks/use-toast";
 import { useWallet } from "@/hooks/useWallet";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { insertMarketSchema } from "@shared/schema";
+import { insertMarketSchema, type InsertMarket } from "@shared/schema";
 import { z } from "zod";
 import { Plus, Trash2 } from "lucide-react";
 
-const createMarketFormSchema = z.object({
-  question: z.string().min(10, "Question must be at least 10 characters"),
-  description: z.string().optional(),
-  category: z.enum(["Politics", "Sports", "Crypto", "Economy", "Entertainment"]),
-  marketType: z.string().default("binary"),
-  outcomes: z.array(z.string()),
-  creatorAddress: z.string(),
-  closingTime: z.string().min(1, "Closing time is required"),
-  resolutionSource: z.string().min(1, "Resolution source is required"),
-  yesProbability: z.string().default("0.5"),
-  yesPrice: z.string().default("0.5"),
-  noPrice: z.string().default("0.5"),
-});
+const createMarketFormSchema = insertMarketSchema
+  .extend({
+    question: z.string().min(10, "Question must be at least 10 characters"),
+    closingTime: z.string().refine(
+      (val) => {
+        const date = new Date(val);
+        return date > new Date();
+      },
+      { message: "Closing time must be in the future" }
+    ),
+    outcomes: z.array(z.string().min(1, "Outcome cannot be empty")).min(2, "At least 2 outcomes required"),
+  })
+  .omit({
+    resolutionTime: true,
+    status: true,
+    resolvedOutcome: true,
+    isFeatured: true,
+    isLive: true,
+  });
 
-type CreateMarketForm = z.infer<typeof createMarketFormSchema>;
+type CreateMarketForm = Omit<z.infer<typeof createMarketFormSchema>, 'closingTime'> & { closingTime: string };
 
 export default function CreateMarketPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { address } = useWallet();
-  const [customOutcomes, setCustomOutcomes] = useState<string[]>(["Yes", "No"]);
 
   const form = useForm<CreateMarketForm>({
     resolver: zodResolver(createMarketFormSchema),
@@ -58,7 +63,11 @@ export default function CreateMarketPage() {
 
   const createMarketMutation = useMutation({
     mutationFn: async (data: CreateMarketForm) => {
-      const response = await apiRequest("POST", "/api/markets", data);
+      const payload: InsertMarket = {
+        ...data,
+        closingTime: new Date(data.closingTime),
+      };
+      const response = await apiRequest("POST", "/api/markets", payload);
       return response.json();
     },
     onSuccess: (data) => {
@@ -88,27 +97,52 @@ export default function CreateMarketPage() {
       return;
     }
 
+    // Trim outcomes and check for duplicates (case-insensitive)
+    const trimmedOutcomes = data.outcomes.map(o => o.trim()).filter(o => o);
+    const uniqueOutcomes = new Set(trimmedOutcomes.map(o => o.toLowerCase()));
+    
+    if (trimmedOutcomes.some(o => !o)) {
+      toast({
+        title: "Invalid outcomes",
+        description: "All outcomes must have a value.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    if (uniqueOutcomes.size !== trimmedOutcomes.length) {
+      toast({
+        title: "Invalid outcomes",
+        description: "Outcomes must be unique.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     createMarketMutation.mutate({
       ...data,
+      outcomes: trimmedOutcomes,
       creatorAddress: address,
-      outcomes: customOutcomes,
     });
   };
 
   const addOutcome = () => {
-    setCustomOutcomes([...customOutcomes, ""]);
+    const currentOutcomes = form.getValues("outcomes");
+    form.setValue("outcomes", [...currentOutcomes, ""]);
   };
 
   const removeOutcome = (index: number) => {
-    if (customOutcomes.length > 2) {
-      setCustomOutcomes(customOutcomes.filter((_, i) => i !== index));
+    const currentOutcomes = form.getValues("outcomes");
+    if (currentOutcomes.length > 2) {
+      form.setValue("outcomes", currentOutcomes.filter((_, i) => i !== index));
     }
   };
 
   const updateOutcome = (index: number, value: string) => {
-    const newOutcomes = [...customOutcomes];
+    const currentOutcomes = form.getValues("outcomes");
+    const newOutcomes = [...currentOutcomes];
     newOutcomes[index] = value;
-    setCustomOutcomes(newOutcomes);
+    form.setValue("outcomes", newOutcomes);
   };
 
   return (
@@ -172,7 +206,7 @@ export default function CreateMarketPage() {
                     <FormLabel>Category</FormLabel>
                     <Select
                       onValueChange={field.onChange}
-                      defaultValue={field.value}
+                      value={field.value}
                     >
                       <FormControl>
                         <SelectTrigger data-testid="select-category">
@@ -214,43 +248,54 @@ export default function CreateMarketPage() {
               />
             </div>
 
-            <div>
-              <Label className="mb-3 block">Outcomes</Label>
-              <div className="space-y-2">
-                {customOutcomes.map((outcome, index) => (
-                  <div key={index} className="flex gap-2">
-                    <Input
-                      value={outcome}
-                      onChange={(e) => updateOutcome(index, e.target.value)}
-                      placeholder={`Outcome ${index + 1}`}
-                      data-testid={`input-outcome-${index}`}
-                    />
-                    {customOutcomes.length > 2 && (
+            <FormField
+              control={form.control}
+              name="outcomes"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Outcomes</FormLabel>
+                  <FormControl>
+                    <div>
+                      <div className="space-y-2">
+                        {field.value.map((outcome, index) => (
+                          <div key={index} className="flex gap-2">
+                            <Input
+                              value={outcome}
+                              onChange={(e) => updateOutcome(index, e.target.value)}
+                              placeholder={`Outcome ${index + 1}`}
+                              data-testid={`input-outcome-${index}`}
+                            />
+                            {field.value.length > 2 && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => removeOutcome(index)}
+                                data-testid={`button-remove-outcome-${index}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                       <Button
                         type="button"
                         variant="outline"
-                        size="icon"
-                        onClick={() => removeOutcome(index)}
-                        data-testid={`button-remove-outcome-${index}`}
+                        size="sm"
+                        onClick={addOutcome}
+                        className="mt-2"
+                        data-testid="button-add-outcome"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Plus className="h-4 w-4 mr-1" />
+                        Add Outcome
                       </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addOutcome}
-                className="mt-2"
-                data-testid="button-add-outcome"
-              >
-                <Plus className="h-4 w-4 mr-1" />
-                Add Outcome
-              </Button>
-            </div>
+                    </div>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <FormField
               control={form.control}
@@ -260,7 +305,7 @@ export default function CreateMarketPage() {
                   <FormLabel>Resolution Source</FormLabel>
                   <Select
                     onValueChange={field.onChange}
-                    defaultValue={field.value}
+                    value={field.value}
                   >
                     <FormControl>
                       <SelectTrigger data-testid="select-resolution-source">
