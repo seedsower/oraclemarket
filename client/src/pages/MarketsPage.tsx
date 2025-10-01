@@ -35,9 +35,16 @@ export default function MarketsPage() {
 
   return (
     <div className="container px-4 py-8">
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold mb-2" data-testid="text-page-title">Markets</h1>
-        <p className="text-muted-foreground">Trade on real-world events with transparent resolution</p>
+      <div className="mb-8 flex justify-between items-start">
+        <div>
+          <h1 className="text-4xl font-bold mb-2" data-testid="text-page-title">Markets</h1>
+          <p className="text-muted-foreground">Trade on real-world events with transparent resolution</p>
+        </div>
+        <Link href="/markets/create">
+          <Button data-testid="button-create-market">
+            Create Market
+          </Button>
+        </Link>
       </div>
 
       <div className="flex flex-col md:flex-row gap-4 mb-6">

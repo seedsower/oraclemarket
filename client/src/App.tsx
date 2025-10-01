@@ -13,6 +13,7 @@ import StakingPage from "@/pages/StakingPage";
 import GovernancePage from "@/pages/GovernancePage";
 import LeaderboardPage from "@/pages/LeaderboardPage";
 import ProfilePage from "@/pages/ProfilePage";
+import CreateMarketPage from "@/pages/CreateMarketPage";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -20,6 +21,7 @@ function Router() {
     <Switch>
       <Route path="/" component={LandingPage} />
       <Route path="/markets" component={MarketsPage} />
+      <Route path="/markets/create" component={CreateMarketPage} />
       <Route path="/markets/:id" component={MarketDetailPage} />
       <Route path="/portfolio" component={PortfolioPage} />
       <Route path="/stake" component={StakingPage} />
