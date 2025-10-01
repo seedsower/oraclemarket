@@ -14,6 +14,7 @@ import GovernancePage from "@/pages/GovernancePage";
 import LeaderboardPage from "@/pages/LeaderboardPage";
 import ProfilePage from "@/pages/ProfilePage";
 import CreateMarketPage from "@/pages/CreateMarketPage";
+import SwapPage from "@/pages/SwapPage";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -24,6 +25,7 @@ function Router() {
       <Route path="/markets/create" component={CreateMarketPage} />
       <Route path="/markets/:id" component={MarketDetailPage} />
       <Route path="/portfolio" component={PortfolioPage} />
+      <Route path="/swap" component={SwapPage} />
       <Route path="/stake" component={StakingPage} />
       <Route path="/governance" component={GovernancePage} />
       <Route path="/leaderboard" component={LeaderboardPage} />
