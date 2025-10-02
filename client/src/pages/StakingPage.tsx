@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,8 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Coins, Trophy, TrendingUp, DollarSign } from "lucide-react";
+import { Coins, Trophy, TrendingUp, DollarSign, Loader2 } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
+import { useStakedAmount, usePendingRewards, useStake, useUnstake, useClaimRewards } from "@/hooks/useContracts";
+import { useToast } from "@/hooks/use-toast";
+import { parseUnits, formatUnits } from "viem";
 import type { Stake } from "@shared/schema";
 
 const TIER_THRESHOLDS = {
@@ -27,7 +30,15 @@ const TIER_BENEFITS = {
 export default function StakingPage() {
   const [stakeAmount, setStakeAmount] = useState("");
   const [unstakeAmount, setUnstakeAmount] = useState("");
-  const { address } = useWallet();
+  const { address, isConnected } = useWallet();
+  const { toast } = useToast();
+
+  const { data: stakedAmountData } = useStakedAmount(address as `0x${string}`);
+  const { data: pendingRewardsData } = usePendingRewards(address as `0x${string}`);
+
+  const { stake: stakeTokens, isConfirming: isStaking, isSuccess: isStakeSuccess } = useStake();
+  const { unstake: unstakeTokens, isConfirming: isUnstaking, isSuccess: isUnstakeSuccess } = useUnstake();
+  const { claimRewards, isConfirming: isClaiming, isSuccess: isClaimSuccess } = useClaimRewards();
 
   const { data: stake } = useQuery<Stake>({
     queryKey: [`/api/stakes/${address}`],
@@ -38,9 +49,153 @@ export default function StakingPage() {
     queryKey: ["/api/stakes"],
   });
 
-  const stakedAmount = Number(stake?.amount || 0);
-  const pendingRewards = Number(stake?.pendingRewards || 0);
-  const currentTier = stake?.tier || "bronze";
+  const stakedAmount = stakedAmountData ? Number(formatUnits(stakedAmountData as bigint, 18)) : 0;
+  const pendingRewards = pendingRewardsData ? Number(formatUnits(pendingRewardsData as bigint, 18)) : 0;
+  
+  const getTier = (amount: number) => {
+    if (amount >= 100000) return "platinum";
+    if (amount >= 10000) return "gold";
+    if (amount >= 1000) return "silver";
+    return "bronze";
+  };
+  
+  const currentTier = getTier(stakedAmount);
+
+  useEffect(() => {
+    if (isStakeSuccess) {
+      toast({
+        title: "Staking Successful!",
+        description: `Staked ${stakeAmount} ORACLE tokens`,
+      });
+      setStakeAmount("");
+    }
+  }, [isStakeSuccess]);
+
+  useEffect(() => {
+    if (isUnstakeSuccess) {
+      toast({
+        title: "Unstaking Successful!",
+        description: `Unstaked ${unstakeAmount} ORACLE tokens`,
+      });
+      setUnstakeAmount("");
+    }
+  }, [isUnstakeSuccess]);
+
+  useEffect(() => {
+    if (isClaimSuccess) {
+      toast({
+        title: "Rewards Claimed!",
+        description: `Claimed ${pendingRewards.toFixed(2)} ORACLE tokens`,
+      });
+    }
+  }, [isClaimSuccess]);
+
+  const handleStake = () => {
+    if (!isConnected) {
+      toast({
+        title: "Wallet Not Connected",
+        description: "Please connect your wallet to stake",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!stakeAmount || Number(stakeAmount) <= 0) {
+      toast({
+        title: "Invalid Amount",
+        description: "Please enter a valid amount",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const amount = parseUnits(stakeAmount, 18);
+      stakeTokens(amount);
+      toast({
+        title: "Transaction Submitted",
+        description: "Waiting for confirmation...",
+      });
+    } catch (error) {
+      console.error("Stake error:", error);
+      toast({
+        title: "Staking Failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleUnstake = () => {
+    if (!isConnected) {
+      toast({
+        title: "Wallet Not Connected",
+        description: "Please connect your wallet to unstake",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!unstakeAmount || Number(unstakeAmount) <= 0) {
+      toast({
+        title: "Invalid Amount",
+        description: "Please enter a valid amount",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const amount = parseUnits(unstakeAmount, 18);
+      unstakeTokens(amount);
+      toast({
+        title: "Transaction Submitted",
+        description: "Waiting for confirmation...",
+      });
+    } catch (error) {
+      console.error("Unstake error:", error);
+      toast({
+        title: "Unstaking Failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleClaimRewards = () => {
+    if (!isConnected) {
+      toast({
+        title: "Wallet Not Connected",
+        description: "Please connect your wallet to claim rewards",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (pendingRewards <= 0) {
+      toast({
+        title: "No Rewards",
+        description: "You don't have any pending rewards",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      claimRewards();
+      toast({
+        title: "Transaction Submitted",
+        description: "Claiming your rewards...",
+      });
+    } catch (error) {
+      console.error("Claim error:", error);
+      toast({
+        title: "Claim Failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      });
+    }
+  };
 
   const nextTier = currentTier === "bronze" ? "silver" : currentTier === "silver" ? "gold" : currentTier === "gold" ? "platinum" : null;
   const nextTierThreshold = nextTier ? TIER_THRESHOLDS[nextTier as keyof typeof TIER_THRESHOLDS] : null;
@@ -104,7 +259,20 @@ export default function StakingPage() {
                   onChange={(e) => setStakeAmount(e.target.value)}
                   data-testid="input-stake-amount"
                 />
-                <Button data-testid="button-stake">Stake</Button>
+                <Button 
+                  onClick={handleStake}
+                  disabled={!isConnected || !stakeAmount || Number(stakeAmount) <= 0 || isStaking}
+                  data-testid="button-stake"
+                >
+                  {isStaking ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Staking...
+                    </>
+                  ) : (
+                    "Stake"
+                  )}
+                </Button>
               </div>
               <p className="text-xs text-muted-foreground mt-2">
                 Balance: 50,000 ORACLE
@@ -122,7 +290,21 @@ export default function StakingPage() {
                   onChange={(e) => setUnstakeAmount(e.target.value)}
                   data-testid="input-unstake-amount"
                 />
-                <Button variant="outline" data-testid="button-unstake">Unstake</Button>
+                <Button 
+                  variant="outline"
+                  onClick={handleUnstake}
+                  disabled={!isConnected || !unstakeAmount || Number(unstakeAmount) <= 0 || isUnstaking}
+                  data-testid="button-unstake"
+                >
+                  {isUnstaking ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Unstaking...
+                    </>
+                  ) : (
+                    "Unstake"
+                  )}
+                </Button>
               </div>
               <p className="text-xs text-muted-foreground mt-2">
                 7-day cooldown period applies
@@ -138,9 +320,23 @@ export default function StakingPage() {
                   {pendingRewards.toFixed(2)} ORACLE
                 </div>
               </div>
-              <Button size="lg" data-testid="button-claim-rewards">
-                <Coins className="h-4 w-4 mr-2" />
-                Claim Rewards
+              <Button 
+                size="lg"
+                onClick={handleClaimRewards}
+                disabled={!isConnected || pendingRewards <= 0 || isClaiming}
+                data-testid="button-claim-rewards"
+              >
+                {isClaiming ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Claiming...
+                  </>
+                ) : (
+                  <>
+                    <Coins className="h-4 w-4 mr-2" />
+                    Claim Rewards
+                  </>
+                )}
               </Button>
             </div>
           </div>

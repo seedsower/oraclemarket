@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -12,10 +12,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { useWallet } from "@/hooks/useWallet";
+import { useCreateMarket } from "@/hooks/useContracts";
+import { CONTRACTS } from "@/contracts/config";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { insertMarketSchema, type InsertMarket } from "@shared/schema";
 import { z } from "zod";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Loader2 } from "lucide-react";
 
 const createMarketFormSchema = insertMarketSchema
   .extend({
@@ -42,7 +44,8 @@ type CreateMarketForm = Omit<z.infer<typeof createMarketFormSchema>, 'closingTim
 export default function CreateMarketPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { address } = useWallet();
+  const { address, isConnected } = useWallet();
+  const { createMarket, isConfirming, isSuccess, hash } = useCreateMarket();
 
   const form = useForm<CreateMarketForm>({
     resolver: zodResolver(createMarketFormSchema),
@@ -61,34 +64,53 @@ export default function CreateMarketPage() {
     },
   });
 
-  const createMarketMutation = useMutation({
-    mutationFn: async (data: CreateMarketForm) => {
-      const payload: InsertMarket = {
-        ...data,
-        closingTime: new Date(data.closingTime),
+  useEffect(() => {
+    if (isSuccess && hash) {
+      toast({
+        title: "Market Created!",
+        description: "Your prediction market has been created on-chain successfully.",
+      });
+    }
+  }, [isSuccess, hash]);
+
+  useEffect(() => {
+    if (isSuccess && hash) {
+      const formData = form.getValues();
+      const trimmedOutcomes = formData.outcomes.map(o => o.trim()).filter(o => o);
+      
+      const indexMarket = async () => {
+        try {
+          const payload: InsertMarket = {
+            ...formData,
+            outcomes: trimmedOutcomes,
+            closingTime: new Date(formData.closingTime),
+            creatorAddress: address || "",
+          };
+          const response = await apiRequest("POST", "/api/markets", payload);
+          const data = await response.json();
+          
+          queryClient.invalidateQueries({ queryKey: ["/api/markets"] });
+          toast({
+            title: "Market Indexed!",
+            description: "Your market has been indexed in the database.",
+          });
+          setLocation(`/markets/${data.id}`);
+        } catch (error) {
+          console.error("Index error:", error);
+          toast({
+            title: "Indexing Failed",
+            description: "Market was created on-chain but failed to index. Please refresh.",
+            variant: "destructive",
+          });
+        }
       };
-      const response = await apiRequest("POST", "/api/markets", payload);
-      return response.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/markets"] });
-      toast({
-        title: "Market created!",
-        description: "Your prediction market has been created successfully.",
-      });
-      setLocation(`/markets/${data.id}`);
-    },
-    onError: (error) => {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
+      
+      indexMarket();
+    }
+  }, [isSuccess, hash, address, form, toast, setLocation]);
 
   const onSubmit = (data: CreateMarketForm) => {
-    if (!address) {
+    if (!isConnected || !address) {
       toast({
         title: "Wallet not connected",
         description: "Please connect your wallet to create a market.",
@@ -97,7 +119,6 @@ export default function CreateMarketPage() {
       return;
     }
 
-    // Trim outcomes and check for duplicates (case-insensitive)
     const trimmedOutcomes = data.outcomes.map(o => o.trim()).filter(o => o);
     const uniqueOutcomes = new Set(trimmedOutcomes.map(o => o.toLowerCase()));
     
@@ -119,11 +140,36 @@ export default function CreateMarketPage() {
       return;
     }
 
-    createMarketMutation.mutate({
-      ...data,
-      outcomes: trimmedOutcomes,
-      creatorAddress: address,
-    });
+    try {
+      const closingTimestamp = BigInt(Math.floor(new Date(data.closingTime).getTime() / 1000));
+      const resolutionSourceMap: Record<string, number> = {
+        manual: 0,
+        chainlink: 1,
+        uma: 2,
+        api: 3,
+      };
+      const resolutionSourceValue = BigInt(resolutionSourceMap[data.resolutionSource] || 0);
+      
+      createMarket(
+        data.question,
+        trimmedOutcomes,
+        closingTimestamp,
+        resolutionSourceValue,
+        CONTRACTS.MockUSDC
+      );
+      
+      toast({
+        title: "Transaction Submitted",
+        description: "Creating market on blockchain...",
+      });
+    } catch (error) {
+      console.error("Market creation error:", error);
+      toast({
+        title: "Market Creation Failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      });
+    }
   };
 
   const addOutcome = () => {
@@ -331,10 +377,17 @@ export default function CreateMarketPage() {
               <Button
                 type="submit"
                 className="flex-1"
-                disabled={createMarketMutation.isPending || !address}
+                disabled={createMarketMutation.isPending || isConfirming || !isConnected}
                 data-testid="button-create-market"
               >
-                {createMarketMutation.isPending ? "Creating..." : "Create Market"}
+                {isConfirming || createMarketMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    {isConfirming ? "Confirming on blockchain..." : "Creating..."}
+                  </>
+                ) : (
+                  "Create Market"
+                )}
               </Button>
               <Button
                 type="button"
@@ -346,7 +399,7 @@ export default function CreateMarketPage() {
               </Button>
             </div>
 
-            {!address && (
+            {!isConnected && (
               <p className="text-sm text-destructive text-center">
                 Please connect your wallet to create a market
               </p>

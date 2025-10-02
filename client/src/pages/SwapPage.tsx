@@ -1,22 +1,36 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { ArrowDownUp, Info } from "lucide-react";
+import { ArrowDownUp, Info, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useWallet } from "@/hooks/useWallet";
+import { useApproveMockUSDC, useMockUSDCBalance } from "@/hooks/useContracts";
+import { CONTRACTS } from "@/contracts/config";
+import { parseUnits } from "viem";
 
 export default function SwapPage() {
   const [usdcAmount, setUsdcAmount] = useState<string>("");
-  const [isSwapping, setIsSwapping] = useState(false);
   const { toast } = useToast();
   const { address, isConnected } = useWallet();
+
+  const { approve, isConfirming, isSuccess } = useApproveMockUSDC();
 
   const exchangeRate = 0.25;
   const oracleAmount = usdcAmount ? (parseFloat(usdcAmount) / exchangeRate).toFixed(2) : "0.00";
   const minSwap = 10;
   const maxSwap = 10000;
+
+  useEffect(() => {
+    if (isSuccess) {
+      toast({
+        title: "Swap Successful!",
+        description: `Swapped ${usdcAmount} USDC for ${oracleAmount} ORACLE tokens.`,
+      });
+      setUsdcAmount("");
+    }
+  }, [isSuccess]);
 
   const handleSwap = async () => {
     if (!isConnected) {
@@ -57,16 +71,21 @@ export default function SwapPage() {
       return;
     }
 
-    setIsSwapping(true);
-
-    setTimeout(() => {
+    try {
+      const amountInWei = parseUnits(usdcAmount, 6);
+      approve(CONTRACTS.HybridAMM, amountInWei);
       toast({
-        title: "Swap successful!",
-        description: `Swapped ${amount} USDC for ${oracleAmount} ORACLE tokens.`,
+        title: "Transaction Submitted",
+        description: "Approving USDC for swap...",
       });
-      setUsdcAmount("");
-      setIsSwapping(false);
-    }, 1500);
+    } catch (error) {
+      console.error("Swap error:", error);
+      toast({
+        title: "Swap Failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleMaxClick = () => {
@@ -166,15 +185,20 @@ export default function SwapPage() {
 
             <Button
               onClick={handleSwap}
-              disabled={!isConnected || isSwapping || !usdcAmount || parseFloat(usdcAmount) <= 0}
+              disabled={!isConnected || isConfirming || !usdcAmount || parseFloat(usdcAmount) <= 0}
               className="w-full h-12 text-lg"
               data-testid="button-swap"
             >
-              {!isConnected
-                ? "Connect Wallet to Swap"
-                : isSwapping
-                ? "Swapping..."
-                : "Swap Tokens"}
+              {isConfirming ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Swapping...
+                </>
+              ) : !isConnected ? (
+                "Connect Wallet to Swap"
+              ) : (
+                "Swap Tokens"
+              )}
             </Button>
 
             {isConnected && (

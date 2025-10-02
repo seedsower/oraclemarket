@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,8 +6,11 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { TrendingUp, TrendingDown, Settings } from "lucide-react";
+import { TrendingUp, TrendingDown, Settings, Loader2 } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
+import { useBuyShares, useSellShares } from "@/hooks/useContracts";
+import { useToast } from "@/hooks/use-toast";
+import { parseUnits } from "viem";
 import type { Market } from "@shared/schema";
 
 interface TradingPanelProps {
@@ -21,15 +24,84 @@ export function TradingPanel({ market }: TradingPanelProps) {
   const [amount, setAmount] = useState("");
   const [price, setPrice] = useState("");
   const [slippage, setSlippage] = useState(1);
-  const { balance } = useWallet();
+  const { address, isConnected, balance } = useWallet();
+  const { toast } = useToast();
+
+  const { buy, isConfirming: isBuyConfirming, isSuccess: isBuySuccess, hash: buyHash } = useBuyShares();
+  const { sell, isConfirming: isSellConfirming, isSuccess: isSellSuccess, hash: sellHash } = useSellShares();
 
   const currentPrice = outcome === "yes" ? Number(market.yesPrice) : Number(market.noPrice);
   const estimatedShares = amount ? Number(amount) / currentPrice : 0;
   const fee = amount ? Number(amount) * 0.02 : 0;
   const total = amount ? Number(amount) + fee : 0;
 
+  const isConfirming = isBuyConfirming || isSellConfirming;
+
+  useEffect(() => {
+    if (isBuySuccess && buyHash) {
+      toast({
+        title: "Trade Successful!",
+        description: `Successfully bought ${estimatedShares.toFixed(2)} shares`,
+      });
+      setAmount("");
+    }
+  }, [isBuySuccess, buyHash]);
+
+  useEffect(() => {
+    if (isSellSuccess && sellHash) {
+      toast({
+        title: "Trade Successful!",
+        description: `Successfully sold ${estimatedShares.toFixed(2)} shares`,
+      });
+      setAmount("");
+    }
+  }, [isSellSuccess, sellHash]);
+
   const handleTrade = () => {
-    console.log("Execute trade:", { side, orderType, outcome, amount, price });
+    if (!isConnected || !address) {
+      toast({
+        title: "Wallet Not Connected",
+        description: "Please connect your wallet to trade",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!amount || Number(amount) <= 0) {
+      toast({
+        title: "Invalid Amount",
+        description: "Please enter a valid amount",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const marketId = BigInt(market.id);
+      const outcomeIndex = BigInt(outcome === "yes" ? 0 : 1);
+      const amountInWei = parseUnits(amount, 18);
+
+      if (side === "buy") {
+        buy(marketId, outcomeIndex, amountInWei);
+        toast({
+          title: "Transaction Submitted",
+          description: "Waiting for confirmation...",
+        });
+      } else {
+        sell(marketId, outcomeIndex, amountInWei);
+        toast({
+          title: "Transaction Submitted",
+          description: "Waiting for confirmation...",
+        });
+      }
+    } catch (error) {
+      console.error("Trade error:", error);
+      toast({
+        title: "Trade Failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -168,10 +240,19 @@ export function TradingPanel({ market }: TradingPanelProps) {
           className="w-full"
           size="lg"
           onClick={handleTrade}
-          disabled={!amount || Number(amount) <= 0}
+          disabled={!isConnected || !amount || Number(amount) <= 0 || isConfirming}
           data-testid="button-execute-trade"
         >
-          {side === "buy" ? "Buy" : "Sell"} {outcome === "yes" ? "Yes" : "No"}
+          {isConfirming ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              Confirming...
+            </>
+          ) : !isConnected ? (
+            "Connect Wallet"
+          ) : (
+            `${side === "buy" ? "Buy" : "Sell"} ${outcome === "yes" ? "Yes" : "No"}`
+          )}
         </Button>
       </div>
     </Card>

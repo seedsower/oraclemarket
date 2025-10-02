@@ -1,16 +1,78 @@
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Vote, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { Vote, CheckCircle2, XCircle, Clock, Loader2 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { useWallet } from "@/hooks/useWallet";
+import { useStakedAmount, useVote } from "@/hooks/useContracts";
+import { useToast } from "@/hooks/use-toast";
+import { formatUnits } from "viem";
 import type { Proposal } from "@shared/schema";
 
 export default function GovernancePage() {
+  const [votingProposalId, setVotingProposalId] = useState<string | null>(null);
+  const { address, isConnected } = useWallet();
+  const { toast } = useToast();
+
+  const { data: stakedAmountData } = useStakedAmount(address as `0x${string}`);
+  const { vote, isConfirming, isSuccess } = useVote();
+
   const { data: proposals } = useQuery<Proposal[]>({
     queryKey: ["/api/proposals"],
   });
+
+  const votingPower = stakedAmountData ? Number(formatUnits(stakedAmountData as bigint, 18)) : 0;
+
+  useEffect(() => {
+    if (isSuccess) {
+      toast({
+        title: "Vote Submitted!",
+        description: "Your vote has been recorded on-chain",
+      });
+      setVotingProposalId(null);
+    }
+  }, [isSuccess]);
+
+  const handleVote = (proposalId: string, support: boolean) => {
+    if (!isConnected) {
+      toast({
+        title: "Wallet Not Connected",
+        description: "Please connect your wallet to vote",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (votingPower <= 0) {
+      toast({
+        title: "No Voting Power",
+        description: "You need to stake ORACLE tokens to vote",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setVotingProposalId(proposalId);
+      const proposalIdBigInt = BigInt(proposalId);
+      vote(proposalIdBigInt, support);
+      toast({
+        title: "Transaction Submitted",
+        description: `Voting ${support ? "for" : "against"} the proposal...`,
+      });
+    } catch (error) {
+      console.error("Vote error:", error);
+      toast({
+        title: "Vote Failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      });
+      setVotingProposalId(null);
+    }
+  };
 
   const activeProposals = proposals?.filter(p => p.status === "active") || [];
   const pastProposals = proposals?.filter(p => p.status !== "active") || [];
@@ -26,7 +88,7 @@ export default function GovernancePage() {
         <Card className="glass-card p-6">
           <div className="text-sm text-muted-foreground mb-2">Your Voting Power</div>
           <div className="text-3xl font-bold" data-testid="text-voting-power">
-            15,000
+            {votingPower.toLocaleString()}
           </div>
           <p className="text-xs text-muted-foreground mt-2">Based on staked ORACLE</p>
         </Card>
@@ -118,12 +180,31 @@ export default function GovernancePage() {
                     </div>
 
                     <div className="flex gap-2">
-                      <Button className="flex-1 gap-2" data-testid={`button-vote-for-${proposal.id}`}>
-                        <Vote className="h-4 w-4" />
+                      <Button 
+                        className="flex-1 gap-2"
+                        onClick={() => handleVote(proposal.id, true)}
+                        disabled={!isConnected || votingPower <= 0 || (isConfirming && votingProposalId === proposal.id)}
+                        data-testid={`button-vote-for-${proposal.id}`}
+                      >
+                        {isConfirming && votingProposalId === proposal.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Vote className="h-4 w-4" />
+                        )}
                         Vote For
                       </Button>
-                      <Button variant="outline" className="flex-1 gap-2" data-testid={`button-vote-against-${proposal.id}`}>
-                        <Vote className="h-4 w-4" />
+                      <Button 
+                        variant="outline"
+                        className="flex-1 gap-2"
+                        onClick={() => handleVote(proposal.id, false)}
+                        disabled={!isConnected || votingPower <= 0 || (isConfirming && votingProposalId === proposal.id)}
+                        data-testid={`button-vote-against-${proposal.id}`}
+                      >
+                        {isConfirming && votingProposalId === proposal.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Vote className="h-4 w-4" />
+                        )}
                         Vote Against
                       </Button>
                     </div>
