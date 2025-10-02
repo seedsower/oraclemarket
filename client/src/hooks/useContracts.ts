@@ -367,3 +367,66 @@ export function useVote() {
     ...rest,
   };
 }
+
+// OrderBook Hooks
+export function useGetOrderBook(marketId?: bigint, outcome?: bigint) {
+  return useReadContract({
+    address: CONTRACTS.OrderBook,
+    abi: OrderBookABI,
+    functionName: "getOrderBook",
+    args: marketId !== undefined && outcome !== undefined ? [marketId, outcome] : undefined,
+    query: {
+      enabled: marketId !== undefined && outcome !== undefined,
+    },
+  });
+}
+
+export function usePlaceOrder() {
+  const { data: hash, writeContract, ...rest } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+
+  const placeOrder = (
+    marketId: bigint,
+    outcome: bigint,
+    price: bigint,
+    amount: bigint,
+    isBuy: boolean
+  ) => {
+    writeContract({
+      address: CONTRACTS.OrderBook,
+      abi: OrderBookABI,
+      functionName: "placeOrder",
+      args: [marketId, outcome, price, amount, isBuy],
+    });
+  };
+
+  return {
+    placeOrder,
+    hash,
+    isConfirming,
+    isSuccess,
+    ...rest,
+  };
+}
+
+export function useCancelOrder() {
+  const { data: hash, writeContract, ...rest } = useWriteContract();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+
+  const cancelOrder = (orderId: bigint) => {
+    writeContract({
+      address: CONTRACTS.OrderBook,
+      abi: OrderBookABI,
+      functionName: "cancelOrder",
+      args: [orderId],
+    });
+  };
+
+  return {
+    cancelOrder,
+    hash,
+    isConfirming,
+    isSuccess,
+    ...rest,
+  };
+}

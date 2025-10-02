@@ -6,6 +6,9 @@ export function useWallet() {
   const { data: balanceData } = useBalance({
     address,
     token: CONTRACTS.OracleToken,
+    query: {
+      enabled: Boolean(address),
+    },
   });
 
   return {
