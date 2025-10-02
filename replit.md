@@ -18,6 +18,8 @@ Preferred communication style: Simple, everyday language.
 - React 18 with TypeScript for type-safe component development
 - Wouter for lightweight client-side routing
 - TanStack Query (React Query) for server state management and caching
+- Wagmi + Viem for Ethereum/Base Sepolia blockchain interactions
+- RainbowKit for wallet connection (MetaMask, WalletConnect, etc.)
 - Shadcn UI component library built on Radix UI primitives
 - Tailwind CSS for utility-first styling with custom design tokens
 - Recharts for data visualization (price charts, analytics)
@@ -58,7 +60,7 @@ WebSocket connection at `/ws` for real-time market data broadcasts.
 
 **State Management:**
 - Server state managed through TanStack Query with aggressive caching (staleTime: Infinity)
-- Client state uses Zustand for wallet connection state
+- Blockchain state managed through Wagmi hooks for wallet connection and contract interactions
 - Form state handled by React Hook Form with Zod validation
 
 **Database Schema:**
@@ -113,8 +115,18 @@ Markets support multiple resolution sources:
 - Dark mode optimized UI with glass morphism effects
 - Responsive design with mobile breakpoints
 - Toast notifications for user feedback
-- Loading states and optimistic updates
-- Mock wallet integration (production would integrate Web3 wallet)
+- Loading states and transaction confirmations
+- RainbowKit wallet integration with MetaMask, WalletConnect, and other Web3 wallets
+
+**Blockchain Integration (Base Sepolia):**
+- OracleToken (0xE3f7bD9A5dEED21CbdDA5089a44De3938D81c836) - ERC-20 governance token
+- MarketFactory (0xEB5546fc9d78188a1d905F9fa54957a42f43ed8c) - Create and manage prediction markets
+- HybridAMM (0xB9d59Eb5F16Cf8660fc8855cF64Dfb1c2dB76E7F) - Advanced AMM for trading
+- Staking (0x58eD0a8B6F6972d052A405a6B398cDF480B2EA7D) - Stake ORACLE for benefits and rewards
+- Governance (0xb8fE03037Bdf44497589D75DB3B4ed11C9458AAE) - Community governance voting
+- MockUSDC (0x3fcF28B436f16d08dc1e64E90c93833edd1ba0A1) - Test USDC for development
+- OrderBook (0x99aA3F52042586bA4E57D72aCc575057F4853A09) - CLOB for advanced trading
+- Treasury (0xa8E97D3A2d64af4037A504835d7EB1788C945e77) - Protocol fee management
 
 ## External Dependencies
 
