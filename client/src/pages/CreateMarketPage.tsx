@@ -148,7 +148,8 @@ export default function CreateMarketPage() {
         uma: 2,
         api: 3,
       };
-      const resolutionSourceValue = BigInt(resolutionSourceMap[data.resolutionSource] || 0);
+      const resolutionSource = data.resolutionSource || "manual";
+      const resolutionSourceValue = BigInt(resolutionSourceMap[resolutionSource] || 0);
       
       createMarket(
         data.question,
@@ -236,6 +237,7 @@ export default function CreateMarketPage() {
                       className="min-h-[100px]"
                       data-testid="input-description"
                       {...field}
+                      value={field.value || ""}
                     />
                   </FormControl>
                   <FormMessage />
@@ -377,13 +379,13 @@ export default function CreateMarketPage() {
               <Button
                 type="submit"
                 className="flex-1"
-                disabled={createMarketMutation.isPending || isConfirming || !isConnected}
+                disabled={isConfirming || !isConnected}
                 data-testid="button-create-market"
               >
-                {isConfirming || createMarketMutation.isPending ? (
+                {isConfirming ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    {isConfirming ? "Confirming on blockchain..." : "Creating..."}
+                    Confirming on blockchain...
                   </>
                 ) : (
                   "Create Market"

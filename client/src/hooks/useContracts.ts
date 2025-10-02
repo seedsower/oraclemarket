@@ -108,16 +108,16 @@ export function useCreateMarket() {
 
   const createMarket = (
     question: string,
-    description: string,
     outcomes: string[],
     closingTime: bigint,
-    resolutionSource: string
+    resolutionSource: bigint,
+    settlementToken: Address
   ) => {
     writeContract({
       address: CONTRACTS.MarketFactory,
       abi: MarketFactoryABI,
       functionName: "createMarket",
-      args: [question, description, outcomes, closingTime, resolutionSource],
+      args: [question, outcomes, closingTime, resolutionSource, settlementToken],
     });
   };
 
