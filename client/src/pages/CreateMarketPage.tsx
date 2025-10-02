@@ -66,17 +66,20 @@ export default function CreateMarketPage() {
 
   useEffect(() => {
     if (isSuccess && hash) {
+      console.log("Market creation transaction confirmed:", hash);
       toast({
         title: "Market Created!",
         description: "Your prediction market has been created on-chain successfully.",
       });
     }
-  }, [isSuccess, hash]);
+  }, [isSuccess, hash, toast]);
 
   useEffect(() => {
     if (isSuccess && hash) {
       const formData = form.getValues();
       const trimmedOutcomes = formData.outcomes.map(o => o.trim()).filter(o => o);
+      
+      console.log("Indexing market to backend...", formData);
       
       const indexMarket = async () => {
         try {
@@ -86,14 +89,19 @@ export default function CreateMarketPage() {
             closingTime: new Date(formData.closingTime),
             creatorAddress: address || "",
           };
+          
+          console.log("Sending market data to backend:", payload);
           const response = await apiRequest("POST", "/api/markets", payload);
           const data = await response.json();
           
+          console.log("Market indexed successfully:", data);
           queryClient.invalidateQueries({ queryKey: ["/api/markets"] });
+          
           toast({
             title: "Market Indexed!",
             description: "Your market has been indexed in the database.",
           });
+          
           setLocation(`/markets/${data.id}`);
         } catch (error) {
           console.error("Index error:", error);
@@ -110,6 +118,8 @@ export default function CreateMarketPage() {
   }, [isSuccess, hash, address, form, toast, setLocation]);
 
   const onSubmit = (data: CreateMarketForm) => {
+    console.log("Create market form submitted", { isConnected, address, data });
+    
     if (!isConnected || !address) {
       toast({
         title: "Wallet not connected",
@@ -151,6 +161,14 @@ export default function CreateMarketPage() {
       const resolutionSource = data.resolutionSource || "manual";
       const resolutionSourceValue = BigInt(resolutionSourceMap[resolutionSource] || 0);
       
+      console.log("Creating market with params:", {
+        question: data.question,
+        outcomes: trimmedOutcomes,
+        closingTimestamp: closingTimestamp.toString(),
+        resolutionSourceValue: resolutionSourceValue.toString(),
+        settlementToken: CONTRACTS.MockUSDC
+      });
+      
       createMarket(
         data.question,
         trimmedOutcomes,
@@ -161,7 +179,7 @@ export default function CreateMarketPage() {
       
       toast({
         title: "Transaction Submitted",
-        description: "Creating market on blockchain...",
+        description: "Please confirm the transaction in your wallet...",
       });
     } catch (error) {
       console.error("Market creation error:", error);
