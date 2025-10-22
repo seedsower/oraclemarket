@@ -9,15 +9,21 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { useWallet } from "@/hooks/useWallet";
-import { useCreateMarket } from "@/hooks/useContracts";
-import { CONTRACTS } from "@/contracts/config";
+import { useCreateMarket, useOracleTokenBalance, useApproveToken } from "@/hooks/useContracts";
+import { CONTRACTS, MarketFactoryABI } from "@/contracts/config";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { insertMarketSchema, type InsertMarket } from "@shared/schema";
 import { z } from "zod";
-import { Plus, Trash2, Loader2 } from "lucide-react";
+import { Plus, Trash2, Loader2, CheckCircle, CalendarIcon } from "lucide-react";
+import { useReadContract, usePublicClient } from "wagmi";
+import { decodeEventLog } from "viem";
+import { format } from "date-fns";
+import { cn } from "@/lib/utils";
 
 const createMarketFormSchema = insertMarketSchema
   .extend({
@@ -45,7 +51,36 @@ export default function CreateMarketPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { address, isConnected } = useWallet();
-  const { createMarket, isConfirming, isSuccess, hash } = useCreateMarket();
+  const { createMarket, isConfirming, isSuccess, hash, receipt } = useCreateMarket();
+  const { approve, isConfirming: isApproving, isSuccess: approvalSuccess } = useApproveToken();
+  const publicClient = usePublicClient();
+
+  // Debug logging
+  console.log("📊 CreateMarketPage state:", { isSuccess, hash, receipt: !!receipt });
+
+  // Token balance and allowance
+  const { data: balance } = useOracleTokenBalance(address);
+  const { data: allowance } = useReadContract({
+    address: CONTRACTS.OracleToken,
+    abi: [
+      {
+        inputs: [
+          { name: "owner", type: "address" },
+          { name: "spender", type: "address" },
+        ],
+        name: "allowance",
+        outputs: [{ name: "", type: "uint256" }],
+        stateMutability: "view",
+        type: "function",
+      },
+    ],
+    functionName: "allowance",
+    args: address ? [address, CONTRACTS.MarketFactory] : undefined,
+  });
+
+  const REQUIRED_TOKENS = BigInt(110) * BigInt(10 ** 18); // 10 creation fee + 100 min liquidity
+  const hasEnoughTokens = balance && balance >= REQUIRED_TOKENS;
+  const hasApproval = allowance && allowance >= REQUIRED_TOKENS;
 
   const form = useForm<CreateMarketForm>({
     resolver: zodResolver(createMarketFormSchema),
@@ -66,7 +101,7 @@ export default function CreateMarketPage() {
 
   useEffect(() => {
     if (isSuccess && hash) {
-      console.log("Market creation transaction confirmed:", hash);
+      console.log("✅ Market creation transaction confirmed:", hash);
       toast({
         title: "Market Created!",
         description: "Your prediction market has been created on-chain successfully.",
@@ -75,33 +110,70 @@ export default function CreateMarketPage() {
   }, [isSuccess, hash, toast]);
 
   useEffect(() => {
-    if (isSuccess && hash) {
+    console.log("🔍 Indexing useEffect triggered", { isSuccess, hash: !!hash, receipt: !!receipt });
+
+    if (isSuccess && hash && receipt) {
       const formData = form.getValues();
       const trimmedOutcomes = formData.outcomes.map(o => o.trim()).filter(o => o);
-      
+
       console.log("Indexing market to backend...", formData);
-      
+      console.log("Receipt available, logs count:", receipt.logs.length);
+
       const indexMarket = async () => {
         try {
-          const payload: InsertMarket = {
+
+          // Find MarketCreated event in logs
+          let chainId: number | null = null;
+          console.log("📝 Checking", receipt.logs.length, "logs. MarketFactory:", CONTRACTS.MarketFactory);
+
+          for (let i = 0; i < receipt.logs.length; i++) {
+            const log = receipt.logs[i];
+            console.log(`🔍 Log ${i} from:`, log.address, "- Match:", log.address.toLowerCase() === CONTRACTS.MarketFactory.toLowerCase());
+
+            try {
+              const decoded = decodeEventLog({
+                abi: MarketFactoryABI,
+                data: log.data,
+                topics: log.topics,
+              });
+
+              console.log("✅ Decoded event:", decoded.eventName, decoded.args);
+
+              if (decoded.eventName === 'MarketCreated') {
+                chainId = Number(decoded.args.marketId);
+                console.log("🎉 Extracted chainId from event:", chainId);
+                break;
+              }
+            } catch (e) {
+              // Not the event we're looking for, continue
+              console.log("❌ Could not decode:", e instanceof Error ? e.message : 'unknown');
+            }
+          }
+
+          if (chainId === null) {
+            console.warn("⚠️ WARNING: chainId not found in transaction logs!");
+          }
+
+          const payload = {
             ...formData,
+            chainId,
             outcomes: trimmedOutcomes,
-            closingTime: new Date(formData.closingTime),
+            closingTime: formData.closingTime,
             creatorAddress: address || "",
           };
-          
-          console.log("Sending market data to backend:", payload);
+
+          console.log("Sending market data to backend with chainId:", chainId, payload);
           const response = await apiRequest("POST", "/api/markets", payload);
           const data = await response.json();
-          
+
           console.log("Market indexed successfully:", data);
           queryClient.invalidateQueries({ queryKey: ["/api/markets"] });
-          
+
           toast({
             title: "Market Indexed!",
-            description: "Your market has been indexed in the database.",
+            description: `Your market has been indexed (Chain ID: ${chainId}).`,
           });
-          
+
           setLocation(`/markets/${data.id}`);
         } catch (error) {
           console.error("Index error:", error);
@@ -112,14 +184,31 @@ export default function CreateMarketPage() {
           });
         }
       };
-      
+
       indexMarket();
     }
-  }, [isSuccess, hash, address, form, toast, setLocation]);
+  }, [isSuccess, hash, receipt, address, form, toast, setLocation]);
+
+  const handleApprove = () => {
+    if (!hasEnoughTokens) {
+      toast({
+        title: "Insufficient Balance",
+        description: `You need at least 110 ORACLE tokens (you have ${balance ? Number(balance) / 1e18 : 0}).`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    approve(CONTRACTS.MarketFactory, REQUIRED_TOKENS);
+    toast({
+      title: "Approval Submitted",
+      description: "Please confirm the approval in your wallet...",
+    });
+  };
 
   const onSubmit = (data: CreateMarketForm) => {
     console.log("Create market form submitted", { isConnected, address, data });
-    
+
     if (!isConnected || !address) {
       toast({
         title: "Wallet not connected",
@@ -129,9 +218,27 @@ export default function CreateMarketPage() {
       return;
     }
 
+    if (!hasEnoughTokens) {
+      toast({
+        title: "Insufficient Balance",
+        description: `You need at least 110 ORACLE tokens to create a market.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!hasApproval) {
+      toast({
+        title: "Approval Required",
+        description: "Please approve the MarketFactory to spend your tokens first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const trimmedOutcomes = data.outcomes.map(o => o.trim()).filter(o => o);
     const uniqueOutcomes = new Set(trimmedOutcomes.map(o => o.toLowerCase()));
-    
+
     if (trimmedOutcomes.some(o => !o)) {
       toast({
         title: "Invalid outcomes",
@@ -140,7 +247,7 @@ export default function CreateMarketPage() {
       });
       return;
     }
-    
+
     if (uniqueOutcomes.size !== trimmedOutcomes.length) {
       toast({
         title: "Invalid outcomes",
@@ -151,32 +258,25 @@ export default function CreateMarketPage() {
     }
 
     try {
-      const closingTimestamp = BigInt(Math.floor(new Date(data.closingTime).getTime() / 1000));
-      const resolutionSourceMap: Record<string, number> = {
-        manual: 0,
-        chainlink: 1,
-        uma: 2,
-        api: 3,
-      };
-      const resolutionSource = data.resolutionSource || "manual";
-      const resolutionSourceValue = BigInt(resolutionSourceMap[resolutionSource] || 0);
-      
+      const endTime = BigInt(Math.floor(new Date(data.closingTime).getTime() / 1000));
+      const initialLiquidity = BigInt(100) * BigInt(10 ** 18); // 100 tokens minimum liquidity
+
       console.log("Creating market with params:", {
-        question: data.question,
-        outcomes: trimmedOutcomes,
-        closingTimestamp: closingTimestamp.toString(),
-        resolutionSourceValue: resolutionSourceValue.toString(),
-        settlementToken: CONTRACTS.MockUSDC
+        title: data.question,
+        description: data.description || "",
+        category: data.category,
+        endTime: endTime.toString(),
+        initialLiquidity: initialLiquidity.toString()
       });
-      
+
       createMarket(
         data.question,
-        trimmedOutcomes,
-        closingTimestamp,
-        resolutionSourceValue,
-        CONTRACTS.MockUSDC
+        data.description || "",
+        data.category,
+        endTime,
+        initialLiquidity
       );
-      
+
       toast({
         title: "Transaction Submitted",
         description: "Please confirm the transaction in your wallet...",
@@ -219,6 +319,50 @@ export default function CreateMarketPage() {
         </p>
       </div>
 
+      {/* Token Balance & Approval Card */}
+      {isConnected && (
+        <Card className="glass-card p-4 mb-6">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Oracle Token Balance:</span>
+              <span className="text-sm">{balance ? `${Number(balance) / 1e18} ORACLE` : '0 ORACLE'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Required:</span>
+              <span className="text-sm">110 ORACLE (10 fee + 100 liquidity)</span>
+            </div>
+            {hasEnoughTokens && !hasApproval && (
+              <Button
+                onClick={handleApprove}
+                disabled={isApproving}
+                className="w-full"
+                variant="outline"
+              >
+                {isApproving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Approving...
+                  </>
+                ) : (
+                  'Approve Tokens'
+                )}
+              </Button>
+            )}
+            {hasApproval && (
+              <div className="flex items-center gap-2 text-green-600">
+                <CheckCircle className="h-4 w-4" />
+                <span className="text-sm">Tokens approved ✓</span>
+              </div>
+            )}
+            {!hasEnoughTokens && (
+              <p className="text-sm text-destructive">
+                Insufficient balance. You need at least 110 ORACLE tokens.
+              </p>
+            )}
+          </div>
+        </Card>
+      )}
+
       <Card className="glass-card p-6">
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
@@ -230,13 +374,13 @@ export default function CreateMarketPage() {
                   <FormLabel>Question</FormLabel>
                   <FormControl>
                     <Input
-                      placeholder="Will Bitcoin reach $100,000 by end of 2025?"
+                      placeholder="Will Bitcoin reach $100,000 by December 31, 2025 11:59 PM UTC?"
                       data-testid="input-question"
                       {...field}
                     />
                   </FormControl>
                   <FormDescription>
-                    A clear, unambiguous question that can be objectively resolved
+                    A clear, unambiguous question that can be objectively resolved. Include specific dates, times, and timezones for AI Oracle to resolve accurately.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -296,17 +440,70 @@ export default function CreateMarketPage() {
                 control={form.control}
                 name="closingTime"
                 render={({ field }) => (
-                  <FormItem>
+                  <FormItem className="flex flex-col">
                     <FormLabel>Closing Time</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="datetime-local"
-                        data-testid="input-closing-time"
-                        {...field}
-                      />
-                    </FormControl>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <FormControl>
+                          <Button
+                            variant="outline"
+                            className={cn(
+                              "w-full pl-3 text-left font-normal",
+                              !field.value && "text-muted-foreground"
+                            )}
+                            data-testid="input-closing-time"
+                          >
+                            {field.value ? (
+                              <div className="flex flex-col">
+                                <span>{format(new Date(field.value), "PPP p")}</span>
+                                <span className="text-xs text-muted-foreground mt-0.5">
+                                  {Intl.DateTimeFormat().resolvedOptions().timeZone} ({new Date(field.value).toLocaleTimeString('en-US', { timeZoneName: 'short' }).split(' ').pop()})
+                                </span>
+                              </div>
+                            ) : (
+                              <span>Pick a date and time</span>
+                            )}
+                            <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
+                          </Button>
+                        </FormControl>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="single"
+                          selected={field.value ? new Date(field.value) : undefined}
+                          onSelect={(date) => {
+                            if (date) {
+                              // Set time to end of day if not specified
+                              const newDate = new Date(date);
+                              if (!field.value || new Date(field.value).getHours() === 0) {
+                                newDate.setHours(23, 59, 59);
+                              } else {
+                                const oldDate = new Date(field.value);
+                                newDate.setHours(oldDate.getHours(), oldDate.getMinutes(), oldDate.getSeconds());
+                              }
+                              field.onChange(newDate.toISOString());
+                            }
+                          }}
+                          disabled={(date) => date < new Date()}
+                          initialFocus
+                        />
+                        <div className="p-3 border-t">
+                          <Input
+                            type="time"
+                            value={field.value ? format(new Date(field.value), "HH:mm") : "23:59"}
+                            onChange={(e) => {
+                              const [hours, minutes] = e.target.value.split(':');
+                              const currentDate = field.value ? new Date(field.value) : new Date();
+                              currentDate.setHours(parseInt(hours), parseInt(minutes), 0);
+                              field.onChange(currentDate.toISOString());
+                            }}
+                            className="w-full"
+                          />
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                     <FormDescription>
-                      When trading will end
+                      When trading will end. For AI Oracle resolution, specify timezone in your question (e.g., "by 11 AM UTC")
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -397,7 +594,7 @@ export default function CreateMarketPage() {
               <Button
                 type="submit"
                 className="flex-1"
-                disabled={isConfirming || !isConnected}
+                disabled={isConfirming || !isConnected || !hasApproval || !hasEnoughTokens}
                 data-testid="button-create-market"
               >
                 {isConfirming ? (

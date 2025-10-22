@@ -13,6 +13,7 @@ export default function MarketsPage() {
   const [category, setCategory] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("volume");
+  const [statusFilter, setStatusFilter] = useState<"active" | "closed" | "all">("active");
 
   const { data: markets, isLoading } = useQuery<Market[]>({
     queryKey: ["/api/markets"],
@@ -21,6 +22,10 @@ export default function MarketsPage() {
   const categories = ["all", "Politics", "Sports", "Crypto", "Economy", "Entertainment"];
 
   const filteredMarkets = markets?.filter((market) => {
+    // Filter by status (active/closed/resolved)
+    if (statusFilter === "active" && (market.status === "closed" || market.status === "resolved")) return false;
+    if (statusFilter === "closed" && market.status !== "closed" && market.status !== "resolved") return false;
+
     if (category !== "all" && market.category !== category) return false;
     if (search && !market.question.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
@@ -46,6 +51,20 @@ export default function MarketsPage() {
           </Button>
         </Link>
       </div>
+
+      <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as "active" | "closed" | "all")} className="mb-6">
+        <TabsList className="grid grid-cols-3 w-full md:w-[400px]">
+          <TabsTrigger value="active" data-testid="tab-active-markets">
+            Active
+          </TabsTrigger>
+          <TabsTrigger value="closed" data-testid="tab-closed-markets">
+            Closed
+          </TabsTrigger>
+          <TabsTrigger value="all" data-testid="tab-all-markets">
+            All
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       <div className="flex flex-col md:flex-row gap-4 mb-6">
         <div className="relative flex-1">
@@ -112,11 +131,23 @@ export default function MarketsPage() {
                   <span className="text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary">
                     {market.category}
                   </span>
-                  {market.isFeatured && (
-                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-accent/10 text-accent">
-                      Featured
-                    </span>
-                  )}
+                  <div className="flex gap-2">
+                    {market.status === "resolved" && (
+                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-green-500/10 text-green-500">
+                        Resolved
+                      </span>
+                    )}
+                    {market.status === "closed" && (
+                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-yellow-500/10 text-yellow-500">
+                        Closed
+                      </span>
+                    )}
+                    {market.isFeatured && (
+                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-accent/10 text-accent">
+                        Featured
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <h3 className="text-lg font-semibold mb-4 line-clamp-2" data-testid={`text-question-${market.id}`}>
@@ -124,12 +155,21 @@ export default function MarketsPage() {
                 </h3>
 
                 <div className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground">Probability</span>
-                    <span className="text-xl font-bold text-success" data-testid={`text-probability-${market.id}`}>
-                      {(Number(market.yesProbability) * 100).toFixed(0)}%
-                    </span>
-                  </div>
+                  {market.status === "resolved" && market.resolvedOutcome !== null ? (
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Outcome</span>
+                      <span className="text-xl font-bold text-green-500" data-testid={`text-outcome-${market.id}`}>
+                        {market.resolvedOutcome === 0 ? "YES" : "NO"}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-muted-foreground">Probability</span>
+                      <span className="text-xl font-bold text-success" data-testid={`text-probability-${market.id}`}>
+                        {(Number(market.yesProbability) * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>

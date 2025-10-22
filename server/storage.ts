@@ -1,4 +1,8 @@
 import { randomUUID } from "crypto";
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { eq, and, desc, sql } from 'drizzle-orm';
+import * as schema from '@shared/schema';
+import pg from 'pg';
 import type {
   Market, InsertMarket,
   Position, InsertPosition,
@@ -8,6 +12,8 @@ import type {
   Proposal, InsertProposal,
   UserStats, InsertUserStats,
 } from "@shared/schema";
+
+const { Pool } = pg;
 
 export interface IStorage {
   // Markets
@@ -24,6 +30,7 @@ export interface IStorage {
   
   // Positions
   getPosition(id: string): Promise<Position | undefined>;
+  getPositions(filters?: { marketId?: string; status?: string }): Promise<Position[]>;
   getPositionsByUser(userAddress: string): Promise<Position[]>;
   createPosition(position: InsertPosition): Promise<Position>;
   updatePosition(id: string, position: Partial<Position>): Promise<Position | undefined>;
@@ -111,6 +118,7 @@ export class MemStorage implements IStorage {
     const id = randomUUID();
     const market: Market = {
       id,
+      chainId: insertMarket.chainId || null,
       question: insertMarket.question,
       description: insertMarket.description || null,
       category: insertMarket.category,
@@ -149,6 +157,20 @@ export class MemStorage implements IStorage {
   // Positions
   async getPosition(id: string): Promise<Position | undefined> {
     return this.positions.get(id);
+  }
+
+  async getPositions(filters?: { marketId?: string; status?: string }): Promise<Position[]> {
+    let results = Array.from(this.positions.values());
+
+    if (filters?.marketId) {
+      results = results.filter(p => p.marketId === filters.marketId);
+    }
+
+    if (filters?.status) {
+      results = results.filter(p => p.status === filters.status);
+    }
+
+    return results;
   }
 
   async getPositionsByUser(userAddress: string): Promise<Position[]> {
@@ -359,4 +381,199 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+export class PostgresStorage implements IStorage {
+  private db;
+
+  constructor(connectionString: string) {
+    const pool = new Pool({ connectionString });
+    this.db = drizzle(pool, { schema });
+  }
+
+  // Markets
+  async getMarket(id: string): Promise<Market | undefined> {
+    const [market] = await this.db.select().from(schema.markets).where(eq(schema.markets.id, id));
+    return market;
+  }
+
+  async getMarkets(filters?: {
+    category?: string;
+    status?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Market[]> {
+    let query = this.db.select().from(schema.markets);
+
+    const conditions = [];
+    if (filters?.category) conditions.push(eq(schema.markets.category, filters.category));
+    if (filters?.status) conditions.push(eq(schema.markets.status, filters.status));
+    if (filters?.search) {
+      conditions.push(
+        sql`${schema.markets.question} ILIKE ${`%${filters.search}%`} OR ${schema.markets.description} ILIKE ${`%${filters.search}%`}`
+      );
+    }
+
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+
+    query = query.orderBy(desc(schema.markets.createdAt)) as any;
+
+    if (filters?.limit) {
+      query = query.limit(filters.limit) as any;
+    }
+    if (filters?.offset) {
+      query = query.offset(filters.offset) as any;
+    }
+
+    return await query;
+  }
+
+  async createMarket(insertMarket: InsertMarket): Promise<Market> {
+    const [market] = await this.db.insert(schema.markets).values(insertMarket).returning();
+    return market;
+  }
+
+  async updateMarket(id: string, updates: Partial<Market>): Promise<Market | undefined> {
+    const [market] = await this.db.update(schema.markets).set(updates).where(eq(schema.markets.id, id)).returning();
+    return market;
+  }
+
+  // Positions
+  async getPosition(id: string): Promise<Position | undefined> {
+    const [position] = await this.db.select().from(schema.positions).where(eq(schema.positions.id, id));
+    return position;
+  }
+
+  async getPositions(filters?: { marketId?: string; status?: string }): Promise<Position[]> {
+    const conditions = [];
+    if (filters?.marketId) conditions.push(eq(schema.positions.marketId, filters.marketId));
+    if (filters?.status) conditions.push(eq(schema.positions.status, filters.status));
+
+    if (conditions.length > 0) {
+      return await this.db.select().from(schema.positions).where(and(...conditions));
+    }
+    return await this.db.select().from(schema.positions);
+  }
+
+  async getPositionsByUser(userAddress: string): Promise<Position[]> {
+    return await this.db.select().from(schema.positions).where(eq(schema.positions.userAddress, userAddress));
+  }
+
+  async createPosition(insertPosition: InsertPosition): Promise<Position> {
+    const [position] = await this.db.insert(schema.positions).values(insertPosition).returning();
+    return position;
+  }
+
+  async updatePosition(id: string, updates: Partial<Position>): Promise<Position | undefined> {
+    const [position] = await this.db.update(schema.positions).set(updates).where(eq(schema.positions.id, id)).returning();
+    return position;
+  }
+
+  // Orders
+  async getOrder(id: string): Promise<Order | undefined> {
+    const [order] = await this.db.select().from(schema.orders).where(eq(schema.orders.id, id));
+    return order;
+  }
+
+  async getOrdersByUser(userAddress: string): Promise<Order[]> {
+    return await this.db.select().from(schema.orders).where(eq(schema.orders.userAddress, userAddress));
+  }
+
+  async getOrdersByMarket(marketId: string): Promise<Order[]> {
+    return await this.db.select().from(schema.orders).where(eq(schema.orders.marketId, marketId));
+  }
+
+  async createOrder(insertOrder: InsertOrder): Promise<Order> {
+    const [order] = await this.db.insert(schema.orders).values(insertOrder).returning();
+    return order;
+  }
+
+  async updateOrder(id: string, updates: Partial<Order>): Promise<Order | undefined> {
+    const [order] = await this.db.update(schema.orders).set(updates).where(eq(schema.orders.id, id)).returning();
+    return order;
+  }
+
+  // Trades
+  async getTrade(id: string): Promise<Trade | undefined> {
+    const [trade] = await this.db.select().from(schema.trades).where(eq(schema.trades.id, id));
+    return trade;
+  }
+
+  async getTradesByMarket(marketId: string): Promise<Trade[]> {
+    return await this.db.select().from(schema.trades).where(eq(schema.trades.marketId, marketId));
+  }
+
+  async createTrade(insertTrade: InsertTrade): Promise<Trade> {
+    const [trade] = await this.db.insert(schema.trades).values(insertTrade).returning();
+    return trade;
+  }
+
+  // Staking
+  async getStake(userAddress: string): Promise<Stake | undefined> {
+    const [stake] = await this.db.select().from(schema.stakes).where(eq(schema.stakes.userAddress, userAddress));
+    return stake;
+  }
+
+  async getAllStakes(): Promise<Stake[]> {
+    return await this.db.select().from(schema.stakes);
+  }
+
+  async createStake(insertStake: InsertStake): Promise<Stake> {
+    const [stake] = await this.db.insert(schema.stakes).values(insertStake).returning();
+    return stake;
+  }
+
+  async updateStake(userAddress: string, updates: Partial<Stake>): Promise<Stake | undefined> {
+    const [stake] = await this.db.update(schema.stakes).set(updates).where(eq(schema.stakes.userAddress, userAddress)).returning();
+    return stake;
+  }
+
+  // Governance
+  async getProposal(id: string): Promise<Proposal | undefined> {
+    const [proposal] = await this.db.select().from(schema.proposals).where(eq(schema.proposals.id, id));
+    return proposal;
+  }
+
+  async getProposals(status?: string): Promise<Proposal[]> {
+    if (status) {
+      return await this.db.select().from(schema.proposals).where(eq(schema.proposals.status, status));
+    }
+    return await this.db.select().from(schema.proposals);
+  }
+
+  async createProposal(insertProposal: InsertProposal): Promise<Proposal> {
+    const [proposal] = await this.db.insert(schema.proposals).values(insertProposal).returning();
+    return proposal;
+  }
+
+  async updateProposal(id: string, updates: Partial<Proposal>): Promise<Proposal | undefined> {
+    const [proposal] = await this.db.update(schema.proposals).set(updates).where(eq(schema.proposals.id, id)).returning();
+    return proposal;
+  }
+
+  // User Stats
+  async getUserStats(userAddress: string): Promise<UserStats | undefined> {
+    const [stats] = await this.db.select().from(schema.userStats).where(eq(schema.userStats.userAddress, userAddress));
+    return stats;
+  }
+
+  async getLeaderboard(limit: number = 10): Promise<UserStats[]> {
+    return await this.db.select().from(schema.userStats).orderBy(desc(schema.userStats.totalPnL)).limit(limit);
+  }
+
+  async createUserStats(insertStats: InsertUserStats): Promise<UserStats> {
+    const [stats] = await this.db.insert(schema.userStats).values(insertStats).returning();
+    return stats;
+  }
+
+  async updateUserStats(userAddress: string, updates: Partial<UserStats>): Promise<UserStats | undefined> {
+    const [stats] = await this.db.update(schema.userStats).set({ ...updates, updatedAt: new Date() }).where(eq(schema.userStats.userAddress, userAddress)).returning();
+    return stats;
+  }
+}
+
+// Use PostgreSQL if DATABASE_URL is set, otherwise use in-memory storage
+export const storage = process.env.DATABASE_URL
+  ? new PostgresStorage(process.env.DATABASE_URL)
+  : new MemStorage();

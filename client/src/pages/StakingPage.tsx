@@ -6,11 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
-import { Coins, Trophy, TrendingUp, DollarSign, Loader2 } from "lucide-react";
+import { Coins, Trophy, TrendingUp, DollarSign, Loader2, CheckCircle } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
-import { useStakedAmount, usePendingRewards, useStake, useUnstake, useClaimRewards } from "@/hooks/useContracts";
+import { useStakedAmount, usePendingRewards, useStake, useUnstake, useClaimRewards, useOracleTokenBalance, useApproveToken } from "@/hooks/useContracts";
 import { useToast } from "@/hooks/use-toast";
 import { parseUnits, formatUnits } from "viem";
+import { useReadContract } from "wagmi";
+import { CONTRACTS } from "@/contracts/config";
 import type { Stake } from "@shared/schema";
 
 const TIER_THRESHOLDS = {
@@ -35,10 +37,31 @@ export default function StakingPage() {
 
   const { data: stakedAmountData } = useStakedAmount(address as `0x${string}`);
   const { data: pendingRewardsData } = usePendingRewards(address as `0x${string}`);
+  const { data: oracleBalance } = useOracleTokenBalance(address as `0x${string}`);
 
   const { stake: stakeTokens, isConfirming: isStaking, isSuccess: isStakeSuccess } = useStake();
   const { unstake: unstakeTokens, isConfirming: isUnstaking, isSuccess: isUnstakeSuccess } = useUnstake();
   const { claimRewards, isConfirming: isClaiming, isSuccess: isClaimSuccess } = useClaimRewards();
+  const { approve, isConfirming: isApproving, isSuccess: isApprovalSuccess } = useApproveToken();
+
+  // Check allowance
+  const { data: allowance } = useReadContract({
+    address: CONTRACTS.OracleToken,
+    abi: [
+      {
+        inputs: [
+          { name: "owner", type: "address" },
+          { name: "spender", type: "address" },
+        ],
+        name: "allowance",
+        outputs: [{ name: "", type: "uint256" }],
+        stateMutability: "view",
+        type: "function",
+      },
+    ],
+    functionName: "allowance",
+    args: address ? [address, CONTRACTS.Staking] : undefined,
+  });
 
   const { data: stake } = useQuery<Stake>({
     queryKey: [`/api/stakes/${address}`],
@@ -51,14 +74,18 @@ export default function StakingPage() {
 
   const stakedAmount = stakedAmountData ? Number(formatUnits(stakedAmountData as bigint, 18)) : 0;
   const pendingRewards = pendingRewardsData ? Number(formatUnits(pendingRewardsData as bigint, 18)) : 0;
-  
+  const balance = oracleBalance ? Number(formatUnits(oracleBalance as bigint, 18)) : 0;
+
+  const stakeAmountBigInt = stakeAmount ? parseUnits(stakeAmount, 18) : BigInt(0);
+  const hasApproval = allowance && stakeAmountBigInt > BigInt(0) && allowance >= stakeAmountBigInt;
+
   const getTier = (amount: number) => {
     if (amount >= 100000) return "platinum";
     if (amount >= 10000) return "gold";
     if (amount >= 1000) return "silver";
     return "bronze";
   };
-  
+
   const currentTier = getTier(stakedAmount);
 
   useEffect(() => {
@@ -89,6 +116,33 @@ export default function StakingPage() {
       });
     }
   }, [isClaimSuccess]);
+
+  const handleApprove = () => {
+    if (!stakeAmount || Number(stakeAmount) <= 0) {
+      toast({
+        title: "Invalid Amount",
+        description: "Please enter a valid amount",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const amount = parseUnits(stakeAmount, 18);
+      approve(CONTRACTS.Staking, amount);
+      toast({
+        title: "Approval Submitted",
+        description: "Please confirm the approval in your wallet...",
+      });
+    } catch (error) {
+      console.error("Approval error:", error);
+      toast({
+        title: "Approval Failed",
+        description: error instanceof Error ? error.message : "Unknown error occurred",
+        variant: "destructive",
+      });
+    }
+  };
 
   const handleStake = () => {
     if (!isConnected) {
@@ -259,24 +313,49 @@ export default function StakingPage() {
                   onChange={(e) => setStakeAmount(e.target.value)}
                   data-testid="input-stake-amount"
                 />
-                <Button 
-                  onClick={handleStake}
-                  disabled={!isConnected || !stakeAmount || Number(stakeAmount) <= 0 || isStaking}
-                  data-testid="button-stake"
-                >
-                  {isStaking ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Staking...
-                    </>
-                  ) : (
-                    "Stake"
-                  )}
-                </Button>
+                {!hasApproval ? (
+                  <Button
+                    onClick={handleApprove}
+                    disabled={!isConnected || !stakeAmount || Number(stakeAmount) <= 0 || isApproving}
+                    data-testid="button-approve"
+                  >
+                    {isApproving ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Approving...
+                      </>
+                    ) : (
+                      "Approve"
+                    )}
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={handleStake}
+                    disabled={!isConnected || !stakeAmount || Number(stakeAmount) <= 0 || isStaking}
+                    data-testid="button-stake"
+                  >
+                    {isStaking ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Staking...
+                      </>
+                    ) : (
+                      "Stake"
+                    )}
+                  </Button>
+                )}
               </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Balance: 50,000 ORACLE
-              </p>
+              <div className="flex items-center justify-between mt-2">
+                <p className="text-xs text-muted-foreground">
+                  Balance: {balance.toLocaleString()} ORACLE
+                </p>
+                {hasApproval && (
+                  <div className="flex items-center gap-1 text-xs text-green-500">
+                    <CheckCircle className="h-3 w-3" />
+                    Approved
+                  </div>
+                )}
+              </div>
             </div>
 
             <div>

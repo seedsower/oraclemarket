@@ -6,6 +6,7 @@ import { z } from "zod";
 // Markets
 export const markets = pgTable("markets", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  chainId: integer("chain_id").unique(), // On-chain market ID from contract
   question: text("question").notNull(),
   description: text("description"),
   category: text("category").notNull(), // Politics, Sports, Crypto, Economy, Entertainment
@@ -39,7 +40,11 @@ export const markets = pgTable("markets", {
   isLive: boolean("is_live").notNull().default(true),
 });
 
-export const insertMarketSchema = createInsertSchema(markets).omit({
+export const insertMarketSchema = createInsertSchema(markets, {
+  closingTime: z.union([z.date(), z.string().transform((str) => new Date(str))]),
+  resolutionTime: z.union([z.date(), z.string().transform((str) => new Date(str))]).optional(),
+  chainId: z.number().nullable().optional(),
+}).omit({
   id: true,
   createdAt: true,
   volume24h: true,

@@ -8,10 +8,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { TrendingUp, TrendingDown, Settings, Loader2 } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
-import { useBuyShares, useSellShares } from "@/hooks/useContracts";
+import { useBuyShares, useSellShares, useApproveToken, useOracleTokenBalance } from "@/hooks/useContracts";
 import { useToast } from "@/hooks/use-toast";
-import { parseUnits } from "viem";
+import { parseUnits, formatUnits, decodeEventLog } from "viem";
 import type { Market } from "@shared/schema";
+import { CONTRACTS, HybridAMMABI } from "@/contracts/config";
+import { useReadContract } from "wagmi";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 interface TradingPanelProps {
   market: Market;
@@ -27,8 +30,28 @@ export function TradingPanel({ market }: TradingPanelProps) {
   const { address, isConnected, balance } = useWallet();
   const { toast } = useToast();
 
-  const { buy, isConfirming: isBuyConfirming, isSuccess: isBuySuccess, hash: buyHash } = useBuyShares();
-  const { sell, isConfirming: isSellConfirming, isSuccess: isSellSuccess, hash: sellHash } = useSellShares();
+  const { buy, isConfirming: isBuyConfirming, isSuccess: isBuySuccess, hash: buyHash, receipt: buyReceipt } = useBuyShares();
+  const { sell, isConfirming: isSellConfirming, isSuccess: isSellSuccess, hash: sellHash, receipt: sellReceipt } = useSellShares();
+  const { approve, isConfirming: isApproving } = useApproveToken();
+
+  // Check allowance for HybridAMM
+  const { data: allowance } = useReadContract({
+    address: CONTRACTS.OracleToken,
+    abi: [
+      {
+        inputs: [
+          { name: "owner", type: "address" },
+          { name: "spender", type: "address" },
+        ],
+        name: "allowance",
+        outputs: [{ name: "", type: "uint256" }],
+        stateMutability: "view",
+        type: "function",
+      },
+    ],
+    functionName: "allowance",
+    args: address ? [address, CONTRACTS.HybridAMM] : undefined,
+  });
 
   const currentPrice = outcome === "yes" ? Number(market.yesPrice) : Number(market.noPrice);
   const estimatedShares = amount ? Number(amount) / currentPrice : 0;
@@ -37,27 +60,141 @@ export function TradingPanel({ market }: TradingPanelProps) {
 
   const isConfirming = isBuyConfirming || isSellConfirming;
 
-  useEffect(() => {
-    if (isBuySuccess && buyHash) {
-      toast({
-        title: "Trade Successful!",
-        description: `Successfully bought ${estimatedShares.toFixed(2)} shares`,
-      });
-      setAmount("");
-    }
-  }, [isBuySuccess, buyHash]);
+  // Calculate required approval amount (use a large number for unlimited approval)
+  const requiredAmount = amount ? parseUnits(amount, 18) : BigInt(0);
+  const hasApproval = allowance && requiredAmount > 0 ? allowance >= requiredAmount : false;
+
+  const handleApprove = () => {
+    const approvalAmount = parseUnits("1000000", 18); // Approve 1M tokens
+    approve(CONTRACTS.HybridAMM, approvalAmount);
+    toast({
+      title: "Approval Submitted",
+      description: "Please confirm the approval in your wallet...",
+    });
+  };
 
   useEffect(() => {
-    if (isSellSuccess && sellHash) {
+    if (isBuySuccess && buyHash && buyReceipt) {
+      // Parse the SharesPurchased event to get trade details
+      let shares = "0";
+      let cost = "0";
+
+      for (const log of buyReceipt.logs) {
+        try {
+          const decoded = decodeEventLog({
+            abi: HybridAMMABI,
+            data: log.data,
+            topics: log.topics,
+          });
+
+          if (decoded.eventName === 'SharesPurchased') {
+            shares = formatUnits(decoded.args.shares, 18);
+            cost = formatUnits(decoded.args.cost, 18);
+            break;
+          }
+        } catch (e) {
+          // Not the event we're looking for
+        }
+      }
+
       toast({
         title: "Trade Successful!",
-        description: `Successfully sold ${estimatedShares.toFixed(2)} shares`,
+        description: `Successfully bought ${parseFloat(shares).toFixed(2)} shares for ${parseFloat(cost).toFixed(2)} ORACLE`,
       });
+
+      // Index trade to backend
+      const indexTrade = async () => {
+        try {
+          // Update market volume/traders
+          await apiRequest("PATCH", `/api/markets/${market.id}/trade`, {
+            volume: cost,
+            traderAddress: address,
+          });
+
+          // Create/update position
+          await apiRequest("POST", `/api/positions`, {
+            userAddress: address,
+            marketId: market.id,
+            outcome: outcome,
+            shares: shares,
+            averagePrice: (parseFloat(cost) / parseFloat(shares)).toString(),
+            totalCost: cost,
+            status: "open",
+          });
+
+          queryClient.invalidateQueries({ queryKey: [`/api/markets/${market.id}`] });
+          queryClient.invalidateQueries({ queryKey: [`/api/positions/user/${address}`] });
+        } catch (error) {
+          console.error("Failed to index trade:", error);
+        }
+      };
+      indexTrade();
+
       setAmount("");
     }
-  }, [isSellSuccess, sellHash]);
+  }, [isBuySuccess, buyHash, buyReceipt, address, market.id, toast]);
 
-  const handleTrade = () => {
+  useEffect(() => {
+    if (isSellSuccess && sellHash && sellReceipt) {
+      // Parse the SharesSold event to get trade details
+      let shares = "0";
+      let payout = "0";
+
+      for (const log of sellReceipt.logs) {
+        try {
+          const decoded = decodeEventLog({
+            abi: HybridAMMABI,
+            data: log.data,
+            topics: log.topics,
+          });
+
+          if (decoded.eventName === 'SharesSold') {
+            shares = formatUnits(decoded.args.shares, 18);
+            payout = formatUnits(decoded.args.payout, 18);
+            break;
+          }
+        } catch (e) {
+          // Not the event we're looking for
+        }
+      }
+
+      toast({
+        title: "Trade Successful!",
+        description: `Successfully sold ${parseFloat(shares).toFixed(2)} shares for ${parseFloat(payout).toFixed(2)} ORACLE`,
+      });
+
+      // Index trade to backend (sell reduces position)
+      const indexTrade = async () => {
+        try {
+          // Update market volume/traders
+          await apiRequest("PATCH", `/api/markets/${market.id}/trade`, {
+            volume: payout,
+            traderAddress: address,
+          });
+
+          // Update position (selling reduces shares)
+          // In a real app, you'd fetch existing position and update it
+          // For now, we'll just invalidate to refetch
+
+          queryClient.invalidateQueries({ queryKey: [`/api/markets/${market.id}`] });
+          queryClient.invalidateQueries({ queryKey: [`/api/positions/user/${address}`] });
+        } catch (error) {
+          console.error("Failed to index trade:", error);
+        }
+      };
+      indexTrade();
+
+      setAmount("");
+    }
+  }, [isSellSuccess, sellHash, sellReceipt, address, market.id, toast]);
+
+  const handleTrade = async () => {
+    console.log("🔍 TradingPanel handleTrade called. Market data:", {
+      id: market.id,
+      chainId: market.chainId,
+      orderType,
+    });
+
     if (!isConnected || !address) {
       toast({
         title: "Wallet Not Connected",
@@ -76,8 +213,72 @@ export function TradingPanel({ market }: TradingPanelProps) {
       return;
     }
 
+    // For limit orders, validate price
+    if (orderType === "limit" && (!price || Number(price) <= 0)) {
+      toast({
+        title: "Invalid Price",
+        description: "Please enter a valid limit price",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Handle limit orders (off-chain orderbook)
+    if (orderType === "limit") {
+      try {
+        const response = await apiRequest("POST", "/api/orders", {
+          userAddress: address,
+          marketId: market.id,
+          orderType: "limit",
+          side,
+          outcome,
+          price,
+          amount,
+          status: "open",
+        });
+
+        if (response.ok) {
+          toast({
+            title: "Limit Order Placed",
+            description: `Your ${side} order for ${amount} shares at $${price} has been placed.`,
+          });
+          setAmount("");
+          setPrice("");
+          queryClient.invalidateQueries({ queryKey: [`/api/orders/market/${market.id}`] });
+        }
+      } catch (error) {
+        console.error("Limit order error:", error);
+        toast({
+          title: "Order Failed",
+          description: error instanceof Error ? error.message : "Unknown error occurred",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
+
+    // Handle market orders (on-chain trading)
+    if (market.chainId === null || market.chainId === undefined) {
+      console.log("❌ Market chainId check failed:", market.chainId);
+      toast({
+        title: "Market Not On-Chain",
+        description: "This market has not been deployed to the blockchain yet.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (side === "buy" && !hasApproval) {
+      toast({
+        title: "Approval Required",
+        description: "Please approve the HybridAMM to spend your tokens first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
-      const marketId = BigInt(market.id);
+      const marketId = BigInt(market.chainId);
       const outcomeIndex = BigInt(outcome === "yes" ? 0 : 1);
       const amountInWei = parseUnits(amount, 18);
 
@@ -131,7 +332,6 @@ export function TradingPanel({ market }: TradingPanelProps) {
             <SelectContent>
               <SelectItem value="market">Market Order</SelectItem>
               <SelectItem value="limit">Limit Order</SelectItem>
-              <SelectItem value="stop">Stop Order</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -163,17 +363,25 @@ export function TradingPanel({ market }: TradingPanelProps) {
           />
         </div>
 
-        {orderType !== "market" && (
+        {orderType === "limit" && (
           <div>
-            <Label>Price</Label>
+            <div className="flex justify-between mb-2">
+              <Label>Limit Price (per share)</Label>
+              <span className="text-sm text-muted-foreground">Current: ${currentPrice.toFixed(2)}</span>
+            </div>
             <Input
               type="number"
               placeholder="0.00"
               value={price}
               onChange={(e) => setPrice(e.target.value)}
               step="0.01"
+              min="0.01"
+              max="0.99"
               data-testid="input-price"
             />
+            <p className="text-xs text-muted-foreground mt-1">
+              Your order will be placed in the orderbook and filled when market reaches this price
+            </p>
           </div>
         )}
 
@@ -211,36 +419,70 @@ export function TradingPanel({ market }: TradingPanelProps) {
 
         <div className="rounded-lg bg-muted/30 p-4 space-y-2">
           <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Current Price</span>
+            <span className="text-muted-foreground">
+              {orderType === "limit" ? "Limit Price" : "Current Price"}
+            </span>
             <span className="font-medium" data-testid="text-current-price">
-              ${currentPrice.toFixed(2)}
+              ${orderType === "limit" && price ? Number(price).toFixed(2) : currentPrice.toFixed(2)}
             </span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-muted-foreground">Est. Shares</span>
             <span className="font-medium" data-testid="text-estimated-shares">
-              {estimatedShares.toFixed(2)}
+              {orderType === "limit" && price
+                ? (Number(amount) / Number(price)).toFixed(2)
+                : estimatedShares.toFixed(2)
+              }
             </span>
           </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Fee (2%)</span>
-            <span className="font-medium" data-testid="text-fee">
-              ${fee.toFixed(2)}
-            </span>
-          </div>
+          {orderType === "market" && (
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Fee (2%)</span>
+              <span className="font-medium" data-testid="text-fee">
+                ${fee.toFixed(2)}
+              </span>
+            </div>
+          )}
           <div className="border-t border-border pt-2 flex justify-between">
             <span className="font-semibold">Total</span>
             <span className="font-bold" data-testid="text-total">
-              ${total.toFixed(2)}
+              ${orderType === "market" ? total.toFixed(2) : Number(amount || 0).toFixed(2)}
             </span>
           </div>
         </div>
+
+        {side === "buy" && !hasApproval && isConnected && (
+          <Button
+            className="w-full"
+            size="lg"
+            variant="outline"
+            onClick={handleApprove}
+            disabled={isApproving}
+            data-testid="button-approve"
+          >
+            {isApproving ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Approving...
+              </>
+            ) : (
+              "Approve ORACLE Tokens"
+            )}
+          </Button>
+        )}
 
         <Button
           className="w-full"
           size="lg"
           onClick={handleTrade}
-          disabled={!isConnected || !amount || Number(amount) <= 0 || isConfirming}
+          disabled={
+            !isConnected ||
+            !amount ||
+            Number(amount) <= 0 ||
+            isConfirming ||
+            (orderType === "limit" && (!price || Number(price) <= 0)) ||
+            (orderType === "market" && side === "buy" && !hasApproval)
+          }
           data-testid="button-execute-trade"
         >
           {isConfirming ? (
@@ -250,6 +492,8 @@ export function TradingPanel({ market }: TradingPanelProps) {
             </>
           ) : !isConnected ? (
             "Connect Wallet"
+          ) : orderType === "limit" ? (
+            `Place ${side === "buy" ? "Buy" : "Sell"} Order`
           ) : (
             `${side === "buy" ? "Buy" : "Sell"} ${outcome === "yes" ? "Yes" : "No"}`
           )}

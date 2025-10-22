@@ -33,33 +33,37 @@ export function PriceChart({ marketId, yesProbability }: PriceChartProps) {
               <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+          <CartesianGrid strokeDasharray="3 3" stroke="#4a5568" opacity={0.6} />
           <XAxis
             dataKey="time"
-            stroke="hsl(var(--muted-foreground))"
+            stroke="#e2e8f0"
             fontSize={12}
             tickLine={false}
             axisLine={false}
+            tick={{ fill: "#e2e8f0" }}
           />
           <YAxis
-            stroke="hsl(var(--muted-foreground))"
+            stroke="#e2e8f0"
             fontSize={12}
             tickLine={false}
             axisLine={false}
             tickFormatter={(value) => `${value}%`}
+            tick={{ fill: "#e2e8f0" }}
           />
           <Tooltip
             contentStyle={{
-              backgroundColor: "hsl(var(--card))",
-              border: "1px solid hsl(var(--border))",
-              borderRadius: "var(--radius)",
+              backgroundColor: "#1a202c",
+              border: "1px solid #4a5568",
+              borderRadius: "0.5rem",
+              color: "#e2e8f0",
             }}
             formatter={(value: number) => [`${value}%`, "Probability"]}
+            labelStyle={{ color: "#e2e8f0" }}
           />
           <Area
             type="monotone"
             dataKey="price"
-            stroke="hsl(var(--primary))"
+            stroke="#a78bfa"
             strokeWidth={2}
             fill={`url(#gradient-${marketId})`}
           />

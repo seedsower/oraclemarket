@@ -1,7 +1,12 @@
+import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
+import { registerRoutes, setAIOracle, setAIMarketCreator } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { seedData } from "./seed";
+import { MarketSyncService } from "./marketSync";
+import { AIOracle } from "./aiOracle";
+import { AIMarketCreator } from "./aiMarketCreator";
+import { storage } from "./storage";
 
 const app = express();
 
@@ -79,5 +84,26 @@ app.use((req, res, next) => {
   }, async () => {
     log(`serving on port ${port}`);
     await seedData();
+
+    // Start market sync service
+    const syncService = new MarketSyncService(storage);
+    syncService.startAutoSync(30000); // Sync every 30 seconds
+    syncService.watchMarketEvents(); // Watch for real-time events
+
+    log('✅ Market sync service started');
+
+    // Start AI Oracle service
+    const aiOracle = new AIOracle(storage);
+    setAIOracle(aiOracle); // Make available to API routes
+    aiOracle.startAutoResolution(86400000); // Check every 24 hours (1 day)
+
+    log('✅ AI Oracle service started');
+
+    // Start AI Market Creator service
+    const aiMarketCreator = new AIMarketCreator(storage);
+    setAIMarketCreator(aiMarketCreator); // Make available to API routes
+    aiMarketCreator.startAutoCreation(86400000); // Check every 24 hours (1 day)
+
+    log('✅ AI Market Creator service started');
   });
 })();

@@ -1,6 +1,11 @@
 import { storage } from "./storage";
 
 export async function seedData() {
+  // Mock data seeding disabled - users will create their own markets
+  console.log("✅ Database ready (mock data disabled)");
+  return;
+
+  /* MOCK DATA DISABLED
   const now = new Date();
   const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
   const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -334,4 +339,5 @@ export async function seedData() {
   console.log(`- ${mockMarkets.length} markets created`);
   console.log(`- ${mockUserStats.length} user stats created`);
   console.log(`- ${mockProposals.length} proposals created`);
+  */
 }

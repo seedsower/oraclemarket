@@ -55,6 +55,11 @@ export default function MarketDetailPage() {
           <Badge variant="outline" className="capitalize" data-testid="badge-status">
             {market.status}
           </Badge>
+          {market.chainId !== null && market.chainId !== undefined && (
+            <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20">
+              Chain ID: {market.chainId}
+            </Badge>
+          )}
           {market.isFeatured && (
             <Badge className="bg-accent text-accent-foreground">Featured</Badge>
           )}

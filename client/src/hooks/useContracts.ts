@@ -86,7 +86,7 @@ export function useMarketCount() {
   return useReadContract({
     address: CONTRACTS.MarketFactory,
     abi: MarketFactoryABI,
-    functionName: "getMarketCount",
+    functionName: "marketCounter",
   });
 }
 
@@ -104,20 +104,20 @@ export function useMarket(marketId?: bigint) {
 
 export function useCreateMarket() {
   const { data: hash, writeContract, ...rest } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { isLoading: isConfirming, isSuccess, data: receipt } = useWaitForTransactionReceipt({ hash });
 
   const createMarket = (
-    question: string,
-    outcomes: string[],
-    closingTime: bigint,
-    resolutionSource: bigint,
-    settlementToken: Address
+    title: string,
+    description: string,
+    category: string,
+    endTime: bigint,
+    initialLiquidity: bigint
   ) => {
     writeContract({
       address: CONTRACTS.MarketFactory,
       abi: MarketFactoryABI,
       functionName: "createMarket",
-      args: [question, outcomes, closingTime, resolutionSource, settlementToken],
+      args: [title, description, category, endTime, initialLiquidity],
     });
   };
 
@@ -126,6 +126,7 @@ export function useCreateMarket() {
     hash,
     isConfirming,
     isSuccess,
+    receipt,
     ...rest,
   };
 }
@@ -159,7 +160,7 @@ export function useGetBuyPrice(marketId?: bigint, outcome?: bigint, amount?: big
 
 export function useBuyShares() {
   const { data: hash, writeContract, ...rest } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { isLoading: isConfirming, isSuccess, data: receipt } = useWaitForTransactionReceipt({ hash });
 
   const buy = (marketId: bigint, outcome: bigint, amount: bigint) => {
     writeContract({
@@ -175,13 +176,14 @@ export function useBuyShares() {
     hash,
     isConfirming,
     isSuccess,
+    receipt,
     ...rest,
   };
 }
 
 export function useSellShares() {
   const { data: hash, writeContract, ...rest } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { isLoading: isConfirming, isSuccess, data: receipt } = useWaitForTransactionReceipt({ hash });
 
   const sell = (marketId: bigint, outcome: bigint, shares: bigint) => {
     writeContract({
@@ -197,6 +199,7 @@ export function useSellShares() {
     hash,
     isConfirming,
     isSuccess,
+    receipt,
     ...rest,
   };
 }
