@@ -1,8 +1,8 @@
-import express, { Router } from "express";
+import express from "express";
 import serverless from "serverless-http";
-import { createStorage } from "../../server/storage";
+import { storage } from "../../server/storage";
 import { registerRoutes } from "../../server/routes";
-import { MarketSyncService } from "../../server/sync";
+import { MarketSyncService } from "../../server/marketSync";
 
 // Initialize Express app
 const app = express();
@@ -20,27 +20,29 @@ app.use((req, res, next) => {
   next();
 });
 
-// Initialize storage and routes
-let storage: any;
-let syncService: any;
+// Initialize sync service
+let isInitialized = false;
+let syncService: MarketSyncService;
 
 async function initializeServer() {
-  if (!storage) {
-    storage = createStorage();
-
-    // Initialize sync service (runs in serverless context)
+  if (!isInitialized) {
+    // Initialize sync service (note: in serverless, auto-sync may not work as expected)
     syncService = new MarketSyncService(storage);
 
     // Register all routes
-    registerRoutes(app, storage);
+    await registerRoutes(app);
 
     console.log("✅ Serverless API initialized");
+    isInitialized = true;
   }
 }
 
+// Initialize once on cold start
+initializeServer();
+
 // Serverless handler
 export const handler = async (event: any, context: any) => {
-  // Initialize on first request
+  // Ensure initialization is complete
   await initializeServer();
 
   // Create serverless handler
