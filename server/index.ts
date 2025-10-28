@@ -92,18 +92,18 @@ app.use((req, res, next) => {
 
     log('✅ Market sync service started');
 
-    // Start AI Oracle service
+    // Initialize AI Oracle service (manual only - no auto-resolution to save API tokens)
     const aiOracle = new AIOracle(storage);
     setAIOracle(aiOracle); // Make available to API routes
-    aiOracle.startAutoResolution(86400000); // Check every 24 hours (1 day)
+    // aiOracle.startAutoResolution(86400000); // DISABLED to prevent token drain
 
-    log('✅ AI Oracle service started');
+    log('✅ AI Oracle service initialized (manual mode)');
 
-    // Start AI Market Creator service
+    // Initialize AI Market Creator service (manual only - no auto-creation to save API tokens)
     const aiMarketCreator = new AIMarketCreator(storage);
     setAIMarketCreator(aiMarketCreator); // Make available to API routes
-    aiMarketCreator.startAutoCreation(86400000); // Check every 24 hours (1 day)
+    // aiMarketCreator.startAutoCreation(86400000); // DISABLED to prevent token drain
 
-    log('✅ AI Market Creator service started');
+    log('✅ AI Market Creator service initialized (manual mode)');
   });
 })();
