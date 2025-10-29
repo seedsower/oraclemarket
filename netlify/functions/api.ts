@@ -37,10 +37,31 @@ initializeServer();
 
 // Serverless handler
 export const handler = async (event: any, context: any) => {
-  // Ensure initialization is complete
-  await initializeServer();
+  try {
+    console.log("🚀 Serverless function invoked:", event.path);
 
-  // Create serverless handler
-  const serverlessHandler = serverless(app);
-  return serverlessHandler(event, context);
+    // Ensure initialization is complete
+    await initializeServer();
+
+    // Create serverless handler
+    const serverlessHandler = serverless(app);
+    const result: any = await serverlessHandler(event, context);
+
+    console.log("✅ Response status:", result?.statusCode);
+    return result;
+  } catch (error: any) {
+    console.error("❌ Serverless function error:", error);
+    return {
+      statusCode: 500,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
+      body: JSON.stringify({
+        message: "Internal server error",
+        error: error.message,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      }),
+    };
+  }
 };
