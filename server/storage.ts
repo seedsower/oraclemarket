@@ -1,8 +1,10 @@
 import { randomUUID } from "crypto";
-import { drizzle } from 'drizzle-orm/node-postgres';
+import { drizzle as drizzleNode } from 'drizzle-orm/node-postgres';
+import { drizzle as drizzleNeon } from 'drizzle-orm/neon-serverless';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import * as schema from '@shared/schema';
 import pg from 'pg';
+import { neonConfig, Pool as NeonPool } from '@neondatabase/serverless';
 import type {
   Market, InsertMarket,
   Position, InsertPosition,
@@ -14,6 +16,11 @@ import type {
 } from "@shared/schema";
 
 const { Pool } = pg;
+
+// Enable WebSocket for Neon in serverless environments
+if (typeof WebSocket !== 'undefined') {
+  neonConfig.webSocketConstructor = WebSocket;
+}
 
 export interface IStorage {
   // Markets
@@ -381,12 +388,13 @@ export class MemStorage implements IStorage {
   }
 }
 
+// PostgreSQL storage for local development
 export class PostgresStorage implements IStorage {
   private db;
 
   constructor(connectionString: string) {
     const pool = new Pool({ connectionString });
-    this.db = drizzle(pool, { schema });
+    this.db = drizzleNode(pool, { schema });
   }
 
   // Markets
@@ -573,7 +581,23 @@ export class PostgresStorage implements IStorage {
   }
 }
 
-// Use PostgreSQL if DATABASE_URL is set, otherwise use in-memory storage
+// Neon serverless storage - same as PostgresStorage but uses Neon driver
+export class NeonServerlessStorage extends PostgresStorage {
+  constructor(connectionString: string) {
+    // Call parent but we'll override the db
+    super(connectionString);
+    // Replace with Neon pool
+    const pool = new NeonPool({ connectionString });
+    (this as any).db = drizzleNeon(pool, { schema });
+  }
+}
+
+// Detect if running in serverless environment (Netlify, Vercel, AWS Lambda, etc.)
+const isServerless = process.env.NETLIFY || process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME;
+
+// Use appropriate storage based on environment
 export const storage = process.env.DATABASE_URL
-  ? new PostgresStorage(process.env.DATABASE_URL)
+  ? (isServerless ? new NeonServerlessStorage(process.env.DATABASE_URL) : new PostgresStorage(process.env.DATABASE_URL))
   : new MemStorage();
+
+console.log(`📦 Storage initialized: ${process.env.DATABASE_URL ? (isServerless ? 'Neon Serverless' : 'PostgreSQL') : 'In-Memory'}`);
