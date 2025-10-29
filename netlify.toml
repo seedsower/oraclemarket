@@ -1,12 +1,13 @@
 # Netlify Configuration for OracleMarket V2
 
 [build]
-  # Frontend build
-  command = "npm run build"
+  # Frontend build - ensure dependencies are installed first
+  command = "npm ci && npm run build"
   publish = "client/dist"
 
 [build.environment]
   NODE_VERSION = "18"
+  NPM_FLAGS = "--legacy-peer-deps"
 
 # Redirect all server requests to the backend
 [[redirects]]
