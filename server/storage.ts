@@ -593,11 +593,20 @@ export class NeonServerlessStorage extends PostgresStorage {
 }
 
 // Detect if running in serverless environment (Netlify, Vercel, AWS Lambda, etc.)
-const isServerless = process.env.NETLIFY || process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME;
+const isServerless = !!(process.env.NETLIFY || process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.AWS_EXECUTION_ENV);
 
 // Use appropriate storage based on environment
-export const storage = process.env.DATABASE_URL
-  ? (isServerless ? new NeonServerlessStorage(process.env.DATABASE_URL) : new PostgresStorage(process.env.DATABASE_URL))
+const databaseUrl = process.env.DATABASE_URL;
+
+console.log('🔍 Environment check:', {
+  hasDatabase: !!databaseUrl,
+  isServerless,
+  NETLIFY: process.env.NETLIFY,
+  databaseUrlStart: databaseUrl ? databaseUrl.substring(0, 20) + '...' : 'not set'
+});
+
+export const storage = databaseUrl
+  ? (isServerless ? new NeonServerlessStorage(databaseUrl) : new PostgresStorage(databaseUrl))
   : new MemStorage();
 
-console.log(`📦 Storage initialized: ${process.env.DATABASE_URL ? (isServerless ? 'Neon Serverless' : 'PostgreSQL') : 'In-Memory'}`);
+console.log(`📦 Storage initialized: ${databaseUrl ? (isServerless ? 'Neon Serverless' : 'PostgreSQL') : 'In-Memory'}`);
