@@ -581,14 +581,226 @@ export class PostgresStorage implements IStorage {
   }
 }
 
-// Neon serverless storage - same as PostgresStorage but uses Neon driver
-export class NeonServerlessStorage extends PostgresStorage {
+// Neon serverless storage - for serverless environments (Netlify, Vercel, Lambda)
+export class NeonServerlessStorage implements IStorage {
+  private db;
+
   constructor(connectionString: string) {
-    // Call parent but we'll override the db
-    super(connectionString);
-    // Replace with Neon pool
-    const pool = new NeonPool({ connectionString });
-    (this as any).db = drizzleNeon(pool, { schema });
+    console.log('🌐 Initializing Neon serverless connection...');
+    try {
+      const pool = new NeonPool({ connectionString });
+      this.db = drizzleNeon(pool, { schema });
+      console.log('✅ Neon pool created successfully');
+    } catch (error: any) {
+      console.error('❌ Error creating Neon pool:', error.message);
+      throw error;
+    }
+  }
+
+  // Markets
+  async getMarket(id: string): Promise<Market | undefined> {
+    const [market] = await this.db.select().from(schema.markets).where(eq(schema.markets.id, id));
+    return market;
+  }
+
+  async getMarkets(filters?: {
+    category?: string;
+    status?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Market[]> {
+    let query = this.db.select().from(schema.markets);
+
+    const conditions = [];
+    if (filters?.category) conditions.push(eq(schema.markets.category, filters.category));
+    if (filters?.status) conditions.push(eq(schema.markets.status, filters.status));
+    if (filters?.search) conditions.push(sql`${schema.markets.question} ILIKE ${`%${filters.search}%`}`);
+
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+
+    query = query.orderBy(desc(schema.markets.createdAt)) as any;
+
+    if (filters?.limit) query = query.limit(filters.limit) as any;
+    if (filters?.offset) query = query.offset(filters.offset) as any;
+
+    return await query;
+  }
+
+  async createMarket(market: InsertMarket): Promise<Market> {
+    const insertMarket: InsertMarket = {
+      ...market,
+      id: market.id || randomUUID(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const [created] = await this.db.insert(schema.markets).values(insertMarket).returning();
+    return created;
+  }
+
+  async updateMarket(id: string, market: Partial<Market>): Promise<Market | undefined> {
+    const [updated] = await this.db.update(schema.markets).set({ ...market, updatedAt: new Date() }).where(eq(schema.markets.id, id)).returning();
+    return updated;
+  }
+
+  // Positions
+  async getPositions(filters?: { marketId?: string; status?: string }): Promise<Position[]> {
+    let query = this.db.select().from(schema.positions);
+
+    const conditions = [];
+    if (filters?.marketId) conditions.push(eq(schema.positions.marketId, filters.marketId));
+    if (filters?.status) conditions.push(eq(schema.positions.status, filters.status));
+
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+
+    return await query;
+  }
+
+  async getPositionsByUser(userAddress: string): Promise<Position[]> {
+    return await this.db.select().from(schema.positions).where(eq(schema.positions.userAddress, userAddress));
+  }
+
+  async createPosition(position: InsertPosition): Promise<Position> {
+    const insertPosition: InsertPosition = {
+      ...position,
+      id: position.id || randomUUID(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const [created] = await this.db.insert(schema.positions).values(insertPosition).returning();
+    return created;
+  }
+
+  async updatePosition(id: string, position: Partial<Position>): Promise<Position | undefined> {
+    const [updated] = await this.db.update(schema.positions).set({ ...position, updatedAt: new Date() }).where(eq(schema.positions.id, id)).returning();
+    return updated;
+  }
+
+  // Orders
+  async getOrders(filters?: { marketId?: string; userAddress?: string; status?: string }): Promise<Order[]> {
+    let query = this.db.select().from(schema.orders);
+
+    const conditions = [];
+    if (filters?.marketId) conditions.push(eq(schema.orders.marketId, filters.marketId));
+    if (filters?.userAddress) conditions.push(eq(schema.orders.userAddress, filters.userAddress));
+    if (filters?.status) conditions.push(eq(schema.orders.status, filters.status));
+
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+
+    return await query;
+  }
+
+  async createOrder(order: InsertOrder): Promise<Order> {
+    const insertOrder: InsertOrder = {
+      ...order,
+      id: order.id || randomUUID(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const [created] = await this.db.insert(schema.orders).values(insertOrder).returning();
+    return created;
+  }
+
+  async updateOrder(id: string, order: Partial<Order>): Promise<Order | undefined> {
+    const [updated] = await this.db.update(schema.orders).set({ ...order, updatedAt: new Date() }).where(eq(schema.orders.id, id)).returning();
+    return updated;
+  }
+
+  // Trades
+  async getTrades(filters?: { marketId?: string }): Promise<Trade[]> {
+    let query = this.db.select().from(schema.trades).orderBy(desc(schema.trades.timestamp));
+
+    if (filters?.marketId) {
+      query = query.where(eq(schema.trades.marketId, filters.marketId)) as any;
+    }
+
+    return await query;
+  }
+
+  async createTrade(trade: InsertTrade): Promise<Trade> {
+    const insertTrade: InsertTrade = {
+      ...trade,
+      id: trade.id || randomUUID(),
+      timestamp: new Date(),
+    };
+    const [created] = await this.db.insert(schema.trades).values(insertTrade).returning();
+    return created;
+  }
+
+  // Stakes
+  async getUserStakes(userAddress: string): Promise<Stake[]> {
+    return await this.db.select().from(schema.stakes).where(eq(schema.stakes.userAddress, userAddress));
+  }
+
+  async createStake(stake: InsertStake): Promise<Stake> {
+    const insertStake: InsertStake = {
+      ...stake,
+      id: stake.id || randomUUID(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const [created] = await this.db.insert(schema.stakes).values(insertStake).returning();
+    return created;
+  }
+
+  async updateStake(id: string, stake: Partial<Stake>): Promise<Stake | undefined> {
+    const [updated] = await this.db.update(schema.stakes).set({ ...stake, updatedAt: new Date() }).where(eq(schema.stakes.id, id)).returning();
+    return updated;
+  }
+
+  // Proposals
+  async getProposals(filters?: { status?: string }): Promise<Proposal[]> {
+    let query = this.db.select().from(schema.proposals).orderBy(desc(schema.proposals.createdAt));
+
+    if (filters?.status) {
+      query = query.where(eq(schema.proposals.status, filters.status)) as any;
+    }
+
+    return await query;
+  }
+
+  async createProposal(proposal: InsertProposal): Promise<Proposal> {
+    const insertProposal: InsertProposal = {
+      ...proposal,
+      id: proposal.id || randomUUID(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const [created] = await this.db.insert(schema.proposals).values(insertProposal).returning();
+    return created;
+  }
+
+  async updateProposal(id: string, proposal: Partial<Proposal>): Promise<Proposal | undefined> {
+    const [updated] = await this.db.update(schema.proposals).set({ ...proposal, updatedAt: new Date() }).where(eq(schema.proposals.id, id)).returning();
+    return updated;
+  }
+
+  // User Stats
+  async getUserStats(userAddress: string): Promise<UserStats | undefined> {
+    const [stats] = await this.db.select().from(schema.userStats).where(eq(schema.userStats.userAddress, userAddress));
+    return stats;
+  }
+
+  async createUserStats(stats: InsertUserStats): Promise<UserStats> {
+    const insertStats: InsertUserStats = {
+      ...stats,
+      id: stats.id || randomUUID(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const [created] = await this.db.insert(schema.userStats).values(insertStats).returning();
+    return created;
+  }
+
+  async updateUserStats(userAddress: string, updates: Partial<UserStats>): Promise<UserStats | undefined> {
+    const [stats] = await this.db.update(schema.userStats).set({ ...updates, updatedAt: new Date() }).where(eq(schema.userStats.userAddress, userAddress)).returning();
+    return stats;
   }
 }
 
