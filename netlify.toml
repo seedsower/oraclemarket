@@ -2,7 +2,7 @@
 
 [build]
   # Frontend build - ensure dependencies are installed first
-  command = "npm ci && npm run build"
+  command = "npm ci --include=dev && npm run build"
   publish = "client/dist"
 
 [build.environment]
