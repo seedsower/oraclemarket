@@ -210,6 +210,18 @@ export function registerServerlessRoutes(app: Express): void {
     }
   });
 
+  app.get("/api/orders/market/:marketId", async (req, res) => {
+    try {
+      const orders = await storage.getOrders({
+        marketId: req.params.marketId,
+      });
+      res.json(orders);
+    } catch (error: any) {
+      console.error("Error fetching market orders:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.post("/api/orders", async (req, res) => {
     try {
       const parsed = insertOrderSchema.safeParse(req.body);
