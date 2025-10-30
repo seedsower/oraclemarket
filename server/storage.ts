@@ -5,6 +5,7 @@ import { eq, and, desc, sql } from 'drizzle-orm';
 import * as schema from '@shared/schema';
 import pg from 'pg';
 import { neonConfig, Pool as NeonPool } from '@neondatabase/serverless';
+import ws from 'ws';
 import type {
   Market, InsertMarket,
   Position, InsertPosition,
@@ -17,9 +18,14 @@ import type {
 
 const { Pool } = pg;
 
-// Enable WebSocket for Neon in serverless environments
-if (typeof WebSocket !== 'undefined') {
+// Configure WebSocket for Neon in Node.js environments
+// In browsers, WebSocket is global. In Node.js, we need to use the ws package
+if (typeof WebSocket === 'undefined') {
+  neonConfig.webSocketConstructor = ws as any;
+  console.log('✅ WebSocket configured for Neon using ws package');
+} else {
   neonConfig.webSocketConstructor = WebSocket;
+  console.log('✅ WebSocket configured for Neon using global WebSocket');
 }
 
 export interface IStorage {
