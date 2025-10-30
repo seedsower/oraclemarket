@@ -4,10 +4,16 @@
   # Frontend build - ensure dependencies are installed first
   command = "npm ci --include=dev && npm run build"
   publish = "client/dist"
+  functions = ".netlify/functions-internal"
 
 [build.environment]
   NODE_VERSION = "20.19.0"
   NPM_FLAGS = "--legacy-peer-deps"
+
+[functions]
+  # Ensure environment variables are available to functions
+  node_bundler = "esbuild"
+  included_files = ["server/**", "shared/**"]
 
 # Redirect all server requests to the backend
 [[redirects]]
