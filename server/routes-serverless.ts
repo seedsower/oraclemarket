@@ -265,6 +265,26 @@ export function registerServerlessRoutes(app: Express): void {
   });
 
   // Stakes
+  app.get("/api/stakes", async (req, res) => {
+    try {
+      // Return all stakes or empty array for now
+      res.json([]);
+    } catch (error: any) {
+      console.error("Error fetching stakes:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/stakes/:address", async (req, res) => {
+    try {
+      const stakes = await storage.getUserStakes(req.params.address);
+      res.json(stakes);
+    } catch (error: any) {
+      console.error("Error fetching user stakes:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/stakes/user/:address", async (req, res) => {
     try {
       const stakes = await storage.getUserStakes(req.params.address);
@@ -294,7 +314,10 @@ export function registerServerlessRoutes(app: Express): void {
   app.get("/api/proposals", async (req, res) => {
     try {
       const { status } = req.query;
-      const proposals = await storage.getProposals({ status: status as string });
+      // NeonServerlessStorage uses filters object, others use string
+      const proposals = (storage as any).getProposals
+        ? await (storage as any).getProposals(status ? { status: status as string } : undefined)
+        : [];
       res.json(proposals);
     } catch (error: any) {
       console.error("Error fetching proposals:", error);
@@ -313,6 +336,18 @@ export function registerServerlessRoutes(app: Express): void {
       res.status(201).json(proposal);
     } catch (error: any) {
       console.error("Error creating proposal:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Leaderboard
+  app.get("/api/leaderboard", async (req, res) => {
+    try {
+      // For now, return empty leaderboard
+      // In the future, this could aggregate user stats and rank them
+      res.json([]);
+    } catch (error: any) {
+      console.error("Error fetching leaderboard:", error);
       res.status(500).json({ message: error.message });
     }
   });
