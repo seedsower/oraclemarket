@@ -1,6 +1,8 @@
 import type { Express } from "express";
 import { storage } from "./storage";
 import { insertMarketSchema, insertOrderSchema, insertTradeSchema, insertStakeSchema, insertProposalSchema } from "@shared/schema";
+import { AIOracle } from "./aiOracle";
+import { AIMarketCreator } from "./aiMarketCreator";
 
 // Serverless-compatible route registration (no WebSockets)
 export function registerServerlessRoutes(app: Express): void {
@@ -349,6 +351,124 @@ export function registerServerlessRoutes(app: Express): void {
     } catch (error: any) {
       console.error("Error fetching leaderboard:", error);
       res.status(500).json({ message: error.message });
+    }
+  });
+
+  // AI Oracle endpoints
+  app.post("/api/oracle/resolve/:marketId", async (req, res) => {
+    try {
+      const hasAIKey = !!process.env.ANTHROPIC_API_KEY;
+      const hasWallet = !!process.env.PRIVATE_KEY;
+
+      if (!hasAIKey) {
+        return res.status(503).json({ message: "AI Oracle not configured - ANTHROPIC_API_KEY missing" });
+      }
+
+      const market = await storage.getMarket(req.params.marketId);
+      if (!market) {
+        return res.status(404).json({ message: "Market not found" });
+      }
+
+      if (market.status !== 'active') {
+        return res.status(400).json({ message: "Market is not active" });
+      }
+
+      // Use AIOracle for resolution
+      const aiOracle = new AIOracle(storage as any);
+
+      await aiOracle.resolveMarket(market);
+      const updatedMarket = await storage.getMarket(req.params.marketId);
+
+      res.json({
+        success: true,
+        market: updatedMarket,
+        message: "Market resolved successfully"
+      });
+    } catch (error: any) {
+      console.error("Error resolving market:", error);
+      res.status(500).json({
+        message: "Failed to resolve market",
+        error: error.message
+      });
+    }
+  });
+
+  app.get("/api/oracle/status", async (req, res) => {
+    try {
+      const hasAIOracle = !!process.env.ANTHROPIC_API_KEY;
+      const hasWallet = !!process.env.PRIVATE_KEY;
+
+      const markets = await storage.getMarkets({ status: 'active' });
+      const pendingResolution = markets.filter(m => {
+        const now = new Date();
+        return m.endTime && new Date(m.endTime) < now;
+      });
+
+      res.json({
+        enabled: hasAIOracle && hasWallet,
+        hasAIKey: hasAIOracle,
+        hasWallet: hasWallet,
+        activeMarkets: markets.length,
+        pendingResolution: pendingResolution.length,
+      });
+    } catch (error: any) {
+      console.error("Error fetching oracle status:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/oracle/trigger-creator", async (req, res) => {
+    try {
+      const hasAIKey = !!process.env.ANTHROPIC_API_KEY;
+
+      if (!hasAIKey) {
+        return res.status(503).json({ message: "AI Market Creator not configured - ANTHROPIC_API_KEY missing" });
+      }
+
+      // Use AIMarketCreator
+      const aiMarketCreator = new AIMarketCreator(storage as any);
+
+      aiMarketCreator.researchAndCreateMarkets();
+      res.json({
+        success: true,
+        message: "AI Market Creator triggered successfully. Check logs for progress."
+      });
+    } catch (error: any) {
+      console.error("Error triggering market creator:", error);
+      res.status(500).json({
+        message: "Failed to trigger market creation",
+        error: error.message
+      });
+    }
+  });
+
+  app.post("/api/oracle/create-market", async (req, res) => {
+    try {
+      const hasAIKey = !!process.env.ANTHROPIC_API_KEY;
+
+      if (!hasAIKey) {
+        return res.status(503).json({ message: "AI Market Creator not configured - ANTHROPIC_API_KEY missing" });
+      }
+
+      const { topic } = req.body;
+      if (!topic) {
+        return res.status(400).json({ message: "Topic is required" });
+      }
+
+      // Use AIMarketCreator
+      const aiMarketCreator = new AIMarketCreator(storage as any);
+
+      await aiMarketCreator.createMarketForTopic(topic);
+      res.json({
+        success: true,
+        message: "Market created successfully"
+      });
+    } catch (error: any) {
+      console.error("Error creating market for topic:", error);
+      res.status(500).json({
+        message: "Failed to create market for topic",
+        error: error.message
+      });
     }
   });
 
